@@ -1,0 +1,9 @@
+{
+  "Author": "veyn",
+  "Name": "Craft sim",
+  "Punchline": "Simple crafting sim",
+  "Description": "Crafting sim to better understand expert recipes and do A/B testing on strats.",
+  "InternalName": "craftsim",
+  "DalamudApiLevel": 9,
+  "ApplicableVersion": "any"
+}
