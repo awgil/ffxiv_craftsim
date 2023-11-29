@@ -6,6 +6,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using ImGuiNET;
 using Lumina.Excel.GeneratedSheets;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
@@ -17,12 +18,50 @@ public class RecommendationUI : IDisposable
     private Solver _solver = new();
     private Recipe? _curRecipe;
     private CraftAction _lastAction;
+    private uint _classId;
+
+    private Dictionary<uint, CraftAction> _idToAction = new();
+    private uint[,] _actionIds = new uint[(int)CraftAction.Count, 8];
 
     private unsafe delegate bool UseActionDelegate(ActionManager* self, ActionType actionType, uint actionID, ulong targetID, uint itemLocation, uint callType, uint comboRouteID, bool* outOptGTModeStarted);
     private Hook<UseActionDelegate> _useActionHook;
 
     public unsafe RecommendationUI()
     {
+        AssignActionID(CraftAction.BasicSynthesis, [100001, 100015, 100030, 100075, 100045, 100060, 100090, 100105]);
+        AssignActionID(CraftAction.CarefulSynthesis, [100203, 100204, 100205, 100206, 100207, 100208, 100209, 100210]);
+        AssignActionID(CraftAction.RapidSynthesis, [100363, 100364, 100365, 100366, 100367, 100368, 100369, 100370]);
+        AssignActionID(CraftAction.FocusedSynthesis, [100235, 100236, 100237, 100238, 100239, 100240, 100241, 100242]);
+        AssignActionID(CraftAction.Groundwork, [100403, 100404, 100405, 100406, 100407, 100408, 100409, 100410]);
+        AssignActionID(CraftAction.IntensiveSynthesis, [100315, 100316, 100317, 100318, 100319, 100320, 100321, 100322]);
+        AssignActionID(CraftAction.PrudentSynthesis, [100427, 100428, 100429, 100430, 100431, 100432, 100433, 100434]);
+        AssignActionID(CraftAction.MuscleMemory, [100379, 100380, 100381, 100382, 100383, 100384, 100385, 100386]);
+        AssignActionID(CraftAction.BasicTouch, [100002, 100016, 100031, 100076, 100046, 100061, 100091, 100106]);
+        AssignActionID(CraftAction.StandardTouch, [100004, 100018, 100034, 100078, 100048, 100064, 100093, 100109]);
+        AssignActionID(CraftAction.AdvancedTouch, [100411, 100412, 100413, 100414, 100415, 100416, 100417, 100418]);
+        AssignActionID(CraftAction.HastyTouch, [100355, 100356, 100357, 100358, 100359, 100360, 100361, 100362]);
+        AssignActionID(CraftAction.FocusedTouch, [100243, 100244, 100245, 100246, 100247, 100248, 100249, 100250]);
+        AssignActionID(CraftAction.PreparatoryTouch, [100299, 100300, 100301, 100302, 100303, 100304, 100305, 100306]);
+        AssignActionID(CraftAction.PreciseTouch, [100128, 100129, 100130, 100131, 100132, 100133, 100134, 100135]);
+        AssignActionID(CraftAction.PrudentTouch, [100227, 100228, 100229, 100230, 100231, 100232, 100233, 100234]);
+        AssignActionID(CraftAction.TrainedFinnesse, [100435, 100436, 100437, 100438, 100439, 100440, 100441, 100442]);
+        AssignActionID(CraftAction.Reflect, [100387, 100388, 100389, 100390, 100391, 100392, 100393, 100394]);
+        AssignActionID(CraftAction.ByregotBlessing, [100339, 100340, 100341, 100342, 100343, 100344, 100345, 100346]);
+        AssignActionID(CraftAction.TrainedEye, [100283, 100284, 100285, 100286, 100287, 100288, 100289, 100290]);
+        AssignActionID(CraftAction.DelicateSynthesis, [100323, 100324, 100325, 100326, 100327, 100328, 100329, 100330]);
+        AssignActionID(CraftAction.Veneration, [19297, 19298, 19299, 19300, 19301, 19302, 19303, 19304]);
+        AssignActionID(CraftAction.Innovation, [19004, 19005, 19006, 19007, 19008, 19009, 19010, 19011]);
+        AssignActionID(CraftAction.GreatStrides, [260, 261, 262, 263, 264, 265, 266, 267]);
+        AssignActionID(CraftAction.TricksOfTrade, [100371, 100372, 100373, 100374, 100375, 100376, 100377, 100378]);
+        AssignActionID(CraftAction.MastersMend, [100003, 100017, 100032, 100047, 100062, 100077, 100092, 100107]);
+        AssignActionID(CraftAction.Manipulation, [4574, 4575, 4576, 4577, 4578, 4579, 4580, 4581]);
+        AssignActionID(CraftAction.WasteNot, [4631, 4632, 4633, 4634, 4635, 4636, 4637, 4638]);
+        AssignActionID(CraftAction.WasteNot2, [4639, 4640, 4641, 4642, 4643, 4644, 19002, 19003]);
+        AssignActionID(CraftAction.Observe, [100010, 100023, 100040, 100053, 100070, 100082, 100099, 100113]);
+        AssignActionID(CraftAction.CarefulObservation, [100395, 100396, 100397, 100398, 100399, 100400, 100401, 100402]);
+        AssignActionID(CraftAction.FinalAppraisal, [19012, 19013, 19014, 19015, 19016, 19017, 19018, 19019]);
+        AssignActionID(CraftAction.HeartAndSoul, [100419, 100420, 100421, 100422, 100423, 100424, 100425, 100426]);
+
         _useActionHook = Service.Hook.HookFromSignature<UseActionDelegate>("E8 ?? ?? ?? ?? EB 64 B1 01", UseActionDetour);
         _useActionHook.Enable();
     }
@@ -32,7 +71,7 @@ public class RecommendationUI : IDisposable
         _useActionHook.Dispose();
     }
 
-    public void Draw()
+    public unsafe void Draw()
     {
         if (!Refresh())
         {
@@ -66,7 +105,15 @@ public class RecommendationUI : IDisposable
         ImGui.TextUnformatted(sb.ToString());
 
         ImGui.Separator();
-        ImGui.TextUnformatted($"Recommendation: {_solver.SolveNextStep(_sim)}");
+        var rec = _solver.SolveNextStep(_sim);
+        if (ImGui.Button($"Recommendation: {rec}") && _classId < 8)
+        {
+            var id = _actionIds[(int)rec, _classId];
+            if (id != 0)
+            {
+                ActionManager.Instance()->UseAction(id > 100000 ? ActionType.CraftAction : ActionType.Action, id);
+            }
+        }
     }
 
     private void DrawProgress(string label, int value, int max)
@@ -99,10 +146,12 @@ public class RecommendationUI : IDisposable
         if (player == null)
             return false;
 
+        var classID = player.ClassJob.Id - 8;
         var itemID = addon->AtkUnitBase.AtkValues[16].UInt;
-        if (_curRecipe?.ItemResult.Row != itemID)
+        if (_curRecipe?.ItemResult.Row != itemID || _classId != classID)
         {
-            _curRecipe = Service.LuminaGameData.GetExcelSheet<Recipe>()?.FirstOrDefault(r => r.ItemResult.Row == itemID && r.CraftType.Row == player.ClassJob.Id - 8);
+            _classId = classID;
+            _curRecipe = Service.LuminaGameData.GetExcelSheet<Recipe>()?.FirstOrDefault(r => r.ItemResult.Row == itemID && r.CraftType.Row == classID);
             var lt = _curRecipe?.RecipeLevelTable.Value;
 
             var weapon = Service.LuminaRow<Item>(InventoryManager.Instance()->GetInventorySlot(InventoryType.EquippedItems, 0)->ItemID);
@@ -164,43 +213,30 @@ public class RecommendationUI : IDisposable
 
     private int GetStatusParam(PlayerCharacter pc, uint id) => pc.StatusList.FirstOrDefault(s => s.StatusId == id)?.Param ?? 0;
 
+    private void AssignActionID(CraftAction action, uint[] ids)
+    {
+        foreach (var id in ids)
+        {
+            var classRow = id > 100000 ? Service.LuminaRow<Lumina.Excel.GeneratedSheets.CraftAction>(id)?.ClassJob : Service.LuminaRow<Lumina.Excel.GeneratedSheets.Action>(id)?.ClassJob;
+            if (classRow == null)
+                throw new Exception($"Failed to find definition for {action} {id}");
+            var c = classRow.Row - 8;
+            if (c >= 8)
+                throw new Exception($"Unexpected class {classRow.Row} ({classRow.Value?.Abbreviation}) for {action} {id}");
+            ref var entry = ref _actionIds[(int)action, c];
+            if (entry != 0)
+                throw new Exception($"Duplicate entry for {classRow.Value?.Abbreviation} {action}: {id} and {entry}");
+            entry = id;
+            _idToAction[id] = action;
+        }
+    }
+
     private unsafe bool UseActionDetour(ActionManager* self, ActionType actionType, uint actionID, ulong targetID, uint itemLocation, uint callType, uint comboRouteID, bool* outOptGTModeStarted)
     {
-        _lastAction = (actionType, actionID) switch
+        _lastAction = actionType switch
         {
-            (ActionType.CraftAction, 100001 or 100015 or 100030 or 100075 or 100045 or 100060 or 100090 or 100105) => CraftAction.BasicSynthesis,
-            (ActionType.CraftAction, 100203 or 100204 or 100205 or 100206 or 100207 or 100208 or 100209 or 100210) => CraftAction.CarefulSynthesis,
-            (ActionType.CraftAction, 100363 or 100364 or 100365 or 100366 or 100367 or 100368 or 100369 or 100370) => CraftAction.RapidSynthesis,
-            (ActionType.CraftAction, 100235 or 100236 or 100237 or 100238 or 100239 or 100240 or 100241 or 100242) => CraftAction.FocusedSynthesis,
-            (ActionType.CraftAction, 100403 or 100404 or 100405 or 100406 or 100407 or 100408 or 100409 or 100410) => CraftAction.Groundwork,
-            (ActionType.CraftAction, 100315 or 100316 or 100317 or 100318 or 100319 or 100320 or 100321 or 100322) => CraftAction.IntensiveSynthesis,
-            (ActionType.CraftAction, 100427 or 100428 or 100429 or 100430 or 100431 or 100432 or 100433 or 100434) => CraftAction.PrudentSynthesis,
-            (ActionType.CraftAction, 100379 or 100380 or 100381 or 100382 or 100383 or 100384 or 100385 or 100386) => CraftAction.MuscleMemory,
-            (ActionType.CraftAction, 100002 or 100016 or 100031 or 100076 or 100046 or 100061 or 100091 or 100106) => CraftAction.BasicTouch,
-            (ActionType.CraftAction, 100004 or 100018 or 100034 or 100078 or 100048 or 100064 or 100093 or 100109) => CraftAction.StandardTouch,
-            (ActionType.CraftAction, 100411 or 100412 or 100413 or 100414 or 100415 or 100416 or 100417 or 100418) => CraftAction.AdvancedTouch,
-            (ActionType.CraftAction, 100355 or 100356 or 100357 or 100358 or 100359 or 100360 or 100361 or 100362) => CraftAction.HastyTouch,
-            (ActionType.CraftAction, 100243 or 100244 or 100245 or 100246 or 100247 or 100248 or 100249 or 100250) => CraftAction.FocusedTouch,
-            (ActionType.CraftAction, 100299 or 100300 or 100301 or 100302 or 100303 or 100304 or 100305 or 100306) => CraftAction.PreparatoryTouch,
-            (ActionType.CraftAction, 100128 or 100129 or 100130 or 100131 or 100132 or 100133 or 100134 or 100135) => CraftAction.PreciseTouch,
-            (ActionType.CraftAction, 100227 or 100228 or 100229 or 100230 or 100231 or 100232 or 100233 or 100234) => CraftAction.PrudentTouch,
-            (ActionType.CraftAction, 100435 or 100436 or 100437 or 100438 or 100439 or 100440 or 100441 or 100442) => CraftAction.TrainedFinnesse,
-            (ActionType.CraftAction, 100387 or 100388 or 100389 or 100390 or 100391 or 100392 or 100393 or 100394) => CraftAction.Reflect,
-            (ActionType.CraftAction, 100339 or 100340 or 100341 or 100342 or 100343 or 100344 or 100345 or 100346) => CraftAction.ByregotBlessing,
-            (ActionType.CraftAction, 100283 or 100284 or 100285 or 100286 or 100287 or 100288 or 100289 or 100290) => CraftAction.TrainedEye,
-            (ActionType.CraftAction, 100323 or 100324 or 100325 or 100326 or 100327 or 100328 or 100329 or 100330) => CraftAction.DelicateSynthesis,
-            (ActionType.Action, 19297 or 19298 or 19299 or 19300 or 19301 or 19302 or 19303 or 19304) => CraftAction.Veneration,
-            (ActionType.Action, 19004 or 19005 or 19006 or 19007 or 19008 or 19009 or 19010 or 19011) => CraftAction.Innovation,
-            (ActionType.Action, 260 or 261 or 262 or 263 or 264 or 265 or 266 or 267) => CraftAction.GreatStrides,
-            (ActionType.CraftAction, 100371 or 100372 or 100373 or 100374 or 100375 or 100376 or 100377 or 100378) => CraftAction.TricksOfTrade,
-            (ActionType.CraftAction, 100003 or 100017 or 100032 or 100047 or 100062 or 100077 or 100092 or 100107) => CraftAction.MastersMend,
-            (ActionType.Action, 4574 or 4575 or 4576 or 4577 or 4578 or 4579 or 4580 or 4581) => CraftAction.Manipulation,
-            (ActionType.Action, 4631 or 4632 or 4633 or 4634 or 4635 or 4636 or 4637 or 4638) => CraftAction.WasteNot,
-            (ActionType.Action, 4639 or 4640 or 4641 or 4642 or 4643 or 4644 or 19002 or 19003) => CraftAction.WasteNot2,
-            (ActionType.CraftAction, 100010 or 100023 or 100040 or 100053 or 100070 or 100082 or 100099 or 100113) => CraftAction.Observe,
-            (ActionType.CraftAction, 100395 or 100396 or 100397 or 100398 or 100399 or 100400 or 100401 or 100402) => CraftAction.CarefulObservation,
-            (ActionType.Action, 19012 or 19013 or 19014 or 19015 or 19016 or 19017 or 19018 or 19019) => CraftAction.FinalAppraisal,
-            (ActionType.CraftAction, 100419 or 100420 or 100421 or 100422 or 100423 or 100424 or 100425 or 100426) => CraftAction.HeartAndSoul,
+            ActionType.Action => actionID < 100000 ? _idToAction.GetValueOrDefault(actionID) : CraftAction.None,
+            ActionType.CraftAction => actionID > 100000 ? _idToAction.GetValueOrDefault(actionID) : CraftAction.None,
             _ => CraftAction.None
         };
         return _useActionHook.Original(self, actionType, actionID, targetID, itemLocation, callType, comboRouteID, outOptGTModeStarted);

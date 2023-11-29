@@ -40,4 +40,6 @@ public enum CraftAction
     CarefulObservation, // change condition
     FinalAppraisal, // next progress action can't finish craft, does not tick buffs or change conditions, 1cp cost
     HeartAndSoul, // next good-only action can be used without condition, does not tick buffs or change conditions
+
+    Count
 }
