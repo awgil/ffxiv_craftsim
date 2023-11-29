@@ -41,6 +41,7 @@ public class Solver
     public bool FinisherBaitGoodByregot = true; // if true, use careful observations to try baiting good byregot
     public bool FinisherBaitPliantManip = false; // if true, use careful observations to try baiting pliant manip/mm
     public bool FinisherAllowPrep = true; // if true, we consider prep touch a good move for finisher under good+inno+gs
+    public bool EmergencyCPBaitGood = false; // if true, we allow spending careful observations to try baiting good for tricks when we really lack cp
 
     public void Draw()
     {
@@ -60,6 +61,7 @@ public class Solver
         ImGui.Checkbox("Finisher: use careful observation to try baiting good for byregot", ref FinisherBaitGoodByregot);
         ImGui.Checkbox("Finisher: use careful observation to try baiting pliant for manip/mm", ref FinisherBaitPliantManip);
         ImGui.Checkbox("Finisher: consider prep touch a good move under good+inno+gs, assuming we have enough dura", ref FinisherAllowPrep);
+        ImGui.Checkbox("Emergency: use careful observation to try baiting good for tricks if really low on cp", ref EmergencyCPBaitGood);
     }
 
     public void Solve(Simulator sim)
@@ -314,6 +316,10 @@ public class Solver
                 return CraftAction.MastersMend;
             if (last.Condition != CraftCondition.Pliant && freeCP >= 44 + 7)
                 return CraftAction.Observe; // we don't have enough for mm, but might get lucky if we try baiting it with observe...
+            // try to regain some cp via tricks
+            var emergencyAction = EmergencyRestoreCP(sim);
+            if (emergencyAction != CraftAction.None)
+                return emergencyAction;
             // we don't even have enough cp for mm - oh well, get some buff up, otherwise pray for sturdy/good
             if (sim.GetDurabilityCost(last, CraftAction.ByregotBlessing) < last.Durability) // sturdy, so byregot asap - we won't get a better chance to salvage the situation
                 return CraftAction.ByregotBlessing;
@@ -508,6 +514,10 @@ public class Solver
                 return CraftAction.PrudentTouch;
             if (cpToSpendOnQuality >= sim.GetCPCost(last, CraftAction.TrainedFinnesse))
                 return CraftAction.TrainedFinnesse;
+            // see if we can regain some cp via tricks
+            var emergencyAction = EmergencyRestoreCP(sim);
+            if (emergencyAction != CraftAction.None)
+                return emergencyAction;
             if (CanUseActionSafelyInFinisher(sim, CraftAction.HastyTouch, cpToSpendOnQuality))
                 return CraftAction.HastyTouch; // better than nothing i guess...
 
@@ -535,6 +545,29 @@ public class Solver
 
     public CraftAction SafeCraftAction(Simulator sim, CraftAction action) => sim.WillFinishCraft(sim.Steps.Last(), action) ? CraftAction.FinalAppraisal : action;
 
-    // if not enough cp, it's an emergency (e.g. out of cp mid craft due to really shit luck), just bail...
-    public CraftAction UseIfEnoughCP(Simulator sim, CraftAction action) => sim.Steps.Last().RemainingCP >= sim.GetCPCost(sim.Steps.Last(), action) ? action : CraftAction.BasicSynthesis;
+    // try to use tricks, if needed use h&s
+    public CraftAction EmergencyRestoreCP(Simulator sim)
+    {
+        var last = sim.Steps.Last();
+        if (sim.CanUseAction(last, CraftAction.TricksOfTrade))
+            return CraftAction.TricksOfTrade;
+        if (last.HeartAndSoulAvailable)
+            return CraftAction.HeartAndSoul;
+        if (EmergencyCPBaitGood && last.CarefulObservationLeft > 0)
+            return CraftAction.CarefulObservation; // try baiting good?..
+        return CraftAction.None;
+    }
+
+    // if not enough cp, it's an emergency (e.g. out of cp mid craft due to really shit luck), try tricks or just bail...
+    public CraftAction UseIfEnoughCP(Simulator sim, CraftAction action)
+    {
+        var last = sim.Steps.Last();
+        if (last.RemainingCP >= sim.GetCPCost(last, action))
+            return action;
+        var emergencyAction = EmergencyRestoreCP(sim);
+        if (emergencyAction != CraftAction.None)
+            return emergencyAction;
+        // no idea...
+        return CraftAction.BasicSynthesis;
+    }
 }
