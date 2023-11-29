@@ -37,5 +37,6 @@ public sealed class Plugin : IDalamudPlugin
     {
         WindowSystem.RemoveAllWindows();
         _commandManager.RemoveHandler("/csim");
+        _wndMain.Dispose();
     }
 }

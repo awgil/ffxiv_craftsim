@@ -26,17 +26,17 @@ public class Solver
 {
     public bool UseReflectOpener;
     public bool MuMeRequireVeneration; // if true, we use veneration immediately after mume, disregarding any conditions (except maybe pliant for manip)
-    public bool MuMeAllowIntensive; // if true, we allow spending mume on intensive (400p) rather than rapid (500p) if good condition procs
-    public bool MuMeIntensiveLastResort; // if true and we're on last step of mume, use intensive (forcing via H&S if needed) rather than hoping for rapid (unless we have centered)
+    public bool MuMeAllowIntensive = true; // if true, we allow spending mume on intensive (400p) rather than rapid (500p) if good condition procs
+    public bool MuMeIntensiveLastResort = true; // if true and we're on last step of mume, use intensive (forcing via H&S if needed) rather than hoping for rapid (unless we have centered)
     public int MuMeMinStepsForManip = 2; // if this or less rounds are remaining on mume, don't use manipulation under favourable conditions
     public int MuMeMinStepsForVene = 1; // if this or less rounds are remaining on mume, don't use veneration
     public int MidMaxPliantManipClip = 1; // max number of manipulation stacks we can tolerate losing by reapplying manip on pliant
     public int MidMasterMendLeeway = 5; // min durability deficit to keep after master's mend (e.g. if we'd want to use buff under manip on next steps)
     public bool MidAllowVeneration = true; // if true, we allow using veneration during iq phase if we lack a lot of progress
-    public bool MidAllowIntensive; // if true, we allow spending good condition on intensive if we still need progress
-    public bool MidAllowCenteredHasty; // if true, we consider centered hasty touch a good move for building iq (85% reliability)
-    public bool MidAllowSturdyHasty; // if true, we consider sturdy hasty touch a good move for building iq (50% reliability), otherwise we use combo
-    public bool MidBaitPliantWithObserve; // if true, when very low on durability and without manip active, we use observe rather than normal manip
+    public bool MidAllowIntensive = true; // if true, we allow spending good condition on intensive if we still need progress
+    public bool MidAllowCenteredHasty = true; // if true, we consider centered hasty touch a good move for building iq (85% reliability)
+    public bool MidAllowSturdyHasty = true; // if true, we consider sturdy hasty touch a good move for building iq (50% reliability), otherwise we use combo
+    public bool MidBaitPliantWithObserve = true; // if true, when very low on durability and without manip active, we use observe rather than normal manip
     public bool FinisherBaitGoodByregot = true; // if true, use careful observations to try baiting good byregot
     public bool FinisherBaitPliantManip = false; // if true, use careful observations to try baiting pliant manip/mm
     public bool FinisherAllowPrep = true; // if true, we consider prep touch a good move for finisher under good+inno+gs
@@ -86,14 +86,14 @@ public class Solver
             return SolveFinishProgress(sim, progressDeficit); // we've used byregot's, or we're at max quality anyway, or we can't byregot anymore - just finish the craft now
 
         if (last.VenerationLeft > 0 && progressDeficit > 0)
-            return SolveMidProgress(sim, progressDeficit); // we still have veneration running and need more progress, focus on that...
+            return UseIfEnoughCP(sim, SolveMidProgress(sim, progressDeficit)); // we still have veneration running and need more progress, focus on that...
 
         if (last.IQStacks < 10)
-            return SolveMidIQ(sim, progressDeficit); // we need more iq (and maybe some progress too)
+            return UseIfEnoughCP(sim, SolveMidIQ(sim, progressDeficit)); // we need more iq (and maybe some progress too)
 
         // okay, we're at 10 iq stacks here, finisher time
         if (progressDeficit > 0)
-            return SolveMidProgress(sim, progressDeficit); // we still need progress, handle that before starting finisher
+            return UseIfEnoughCP(sim, SolveMidProgress(sim, progressDeficit)); // we still need progress, handle that before starting finisher
 
         // do the finisher
         var freeCP = last.RemainingCP - reservedCPForProgress - 24;
@@ -176,11 +176,9 @@ public class Solver
     {
         // focus on progress (either veneration is still up, or we want to move to finisher phase asap)
         var duraAction = SolveMidDurabilityManagement(sim); // manage durability
-        var progressAction = duraAction != CraftAction.None ? duraAction : SolveProgress(sim, progressDeficit);
-        if (sim.Steps.Last().RemainingCP >= sim.GetCPCost(sim.Steps.Last(), progressAction))
-            return progressAction;
-        // this is an emergency, we're out of cp while doing mid progress, probably really shit luck, just bail...
-        return CraftAction.BasicSynthesis;
+        if (duraAction != CraftAction.None)
+            return duraAction;
+        return SolveProgress(sim, progressDeficit);
     }
 
     private CraftAction SolveFinishProgress(Simulator sim, int progressDeficit)
@@ -515,4 +513,7 @@ public class Solver
     }
 
     public CraftAction SafeCraftAction(Simulator sim, CraftAction action) => sim.WillFinishCraft(sim.Steps.Last(), action) ? CraftAction.FinalAppraisal : action;
+
+    // if not enough cp, it's an emergency (e.g. out of cp mid craft due to really shit luck), just bail...
+    public CraftAction UseIfEnoughCP(Simulator sim, CraftAction action) => sim.Steps.Last().RemainingCP >= sim.GetCPCost(sim.Steps.Last(), action) ? action : CraftAction.BasicSynthesis;
 }

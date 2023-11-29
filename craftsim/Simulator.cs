@@ -145,7 +145,7 @@ public class Simulator
         next.CarefulObservationLeft = last.CarefulObservationLeft - (action == CraftAction.CarefulObservation ? 1 : 0);
         next.HeartAndSoulActive = action == CraftAction.HeartAndSoul || last.HeartAndSoulActive && (last.Condition is CraftCondition.Good or CraftCondition.Excellent || !ConsumeHeartAndSoul(action));
         next.HeartAndSoulAvailable = last.HeartAndSoulAvailable && action != CraftAction.HeartAndSoul;
-        next.PrevComboAction = SkipUpdates(action) ? last.PrevComboAction : action; // TODO: not sure about this condition...
+        next.PrevComboAction = action; // note: even stuff like final appraisal and h&s break combos
 
         if (last.FinalAppraisalLeft > 0 && next.Progress >= Craft.CraftProgress)
             next.Progress = Craft.CraftProgress - 1;

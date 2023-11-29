@@ -43,7 +43,7 @@ public class SimulatorUI
                 _sim = new(_craft, _seed);
                 _solver.Solve(_sim);
             }
-            while (_sim.Status() is not CraftStatus.InProgress and not CraftStatus.FailedDurability);
+            while (_sim.Status() is not CraftStatus.InProgress/* and not CraftStatus.FailedDurability*/);
         }
         ImGui.SameLine();
         if (ImGui.Button($"Restart with seed:"))

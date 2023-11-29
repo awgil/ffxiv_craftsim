@@ -4,11 +4,12 @@ using System;
 
 namespace craftsim;
 
-public unsafe class MainWindow : Window
+public unsafe class MainWindow : Window, IDisposable
 {
     private TransitionDB _trans = new();
     private SimulatorUI _sim;
     private SolverUI _solver;
+    private RecommendationUI _recommendations = new();
 
     public MainWindow() : base("CraftSim")
     {
@@ -43,6 +44,11 @@ public unsafe class MainWindow : Window
         _solver = new(craft);
     }
 
+    public void Dispose()
+    {
+        _recommendations.Dispose();
+    }
+
     public override void Draw()
     {
         try
@@ -52,6 +58,9 @@ public unsafe class MainWindow : Window
             using var tabs = ImRaii.TabBar("Tabs");
             if (tabs)
             {
+                using (var tab = ImRaii.TabItem("Assist"))
+                    if (tab)
+                        _recommendations.Draw();
                 using (var tab = ImRaii.TabItem("Sim"))
                     if (tab)
                         _sim.Draw();
