@@ -105,6 +105,9 @@ public class RecommendationUI : IDisposable
         ImGui.TextUnformatted(sb.ToString());
 
         ImGui.Separator();
+        if (ImGui.CollapsingHeader("Solver setup"))
+            _solver.Draw();
+
         var rec = _solver.SolveNextStep(_sim);
         if (ImGui.Button($"Recommendation: {rec}") && _classId < 8)
         {

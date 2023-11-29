@@ -19,6 +19,8 @@ public class SolverUI
 
     public void Draw()
     {
+        if (ImGui.CollapsingHeader("Solver setup"))
+            _solver.Draw();
         ImGui.InputInt("Num experiments", ref _newExperimentCount);
         ImGui.SameLine();
         if (ImGui.Button("Run!"))

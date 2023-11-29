@@ -1,4 +1,5 @@
-﻿using System.Linq;
+﻿using ImGuiNET;
+using System.Linq;
 
 namespace craftsim;
 
@@ -40,6 +41,26 @@ public class Solver
     public bool FinisherBaitGoodByregot = true; // if true, use careful observations to try baiting good byregot
     public bool FinisherBaitPliantManip = false; // if true, use careful observations to try baiting pliant manip/mm
     public bool FinisherAllowPrep = true; // if true, we consider prep touch a good move for finisher under good+inno+gs
+
+    public void Draw()
+    {
+        ImGui.Checkbox("Use Reflect instead of MuMe in opener", ref UseReflectOpener);
+        ImGui.Checkbox("MuMe: use veneration asap, disregarding most conditions", ref MuMeRequireVeneration);
+        ImGui.Checkbox("MuMe: allow spending mume on intensive (400p) rather than rapid (500p) if good condition procs", ref MuMeAllowIntensive);
+        ImGui.Checkbox("MuMe: if at last step of mume and not centered, use intensive (forcing via H&S if necessary)", ref MuMeIntensiveLastResort);
+        ImGui.SliderInt("MuMe: allow manipulation only if more than this amount of steps remain on mume", ref MuMeMinStepsForManip, 0, 5);
+        ImGui.SliderInt("MuMe: allow veneration only if more than this amount of steps remain on mume", ref MuMeMinStepsForVene, 0, 5);
+        ImGui.SliderInt("Mid: max steps we allow clipping by reapplying manip on pliant", ref MidMaxPliantManipClip, 0, 8);
+        ImGui.SliderInt("Mid: allow master mend only if at least this durability deficit remains", ref MidMasterMendLeeway, 0, 30);
+        ImGui.Checkbox("Mid: allow veneration if we still have large progress deficit (> rapid)", ref MidAllowVeneration);
+        ImGui.Checkbox("Mid: spend good procs on intensive synth if we need more progress", ref MidAllowIntensive);
+        ImGui.Checkbox("Mid: consider centered hasty a good move for building iq stacks (85% success, 10 dura)", ref MidAllowCenteredHasty);
+        ImGui.Checkbox("Mid: consider sturdy hasty a good move for building iq stacks (50% success, 5 dura)", ref MidAllowSturdyHasty);
+        ImGui.Checkbox("Mid: on low dura, prefer observe to non-pliant manip", ref MidBaitPliantWithObserve);
+        ImGui.Checkbox("Finisher: use careful observation to try baiting good for byregot", ref FinisherBaitGoodByregot);
+        ImGui.Checkbox("Finisher: use careful observation to try baiting pliant for manip/mm", ref FinisherBaitPliantManip);
+        ImGui.Checkbox("Finisher: consider prep touch a good move under good+inno+gs, assuming we have enough dura", ref FinisherAllowPrep);
+    }
 
     public void Solve(Simulator sim)
     {
