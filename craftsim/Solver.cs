@@ -64,16 +64,21 @@ public class Solver
         ImGui.Checkbox("Emergency: use careful observation to try baiting good for tricks if really low on cp", ref EmergencyCPBaitGood);
     }
 
-    public void Solve(Simulator sim)
+    public StepState Solve(Simulator sim, StepState step)
     {
-        while (sim.Execute(SolveNextStep(sim)))
-            ;
+        while (true)
+        {
+            var (res, next) = sim.Execute(step, SolveNextStep(sim, step));
+            if (res == ExecuteResult.CantUse)
+                return step;
+            step = next;
+        }
     }
 
     // TODO: malleable/primed states
-    public CraftAction SolveNextStep(Simulator sim)
+    public CraftAction SolveNextStep(Simulator sim, StepState step)
     {
-        if (sim.Steps.Count == 1)
+        if (step.Index == 1)
         {
             // always open with special action
             // comparison:
@@ -83,96 +88,92 @@ public class Solver
             return UseReflectOpener ? CraftAction.Reflect : CraftAction.MuscleMemory;
         }
 
-        var last = sim.Steps.Last();
-        if (last.MuscleMemoryLeft > 0) // mume still active - means we have very little progress and want more progress asap
-            return SolveOpenerMuMe(sim);
+        if (step.MuscleMemoryLeft > 0) // mume still active - means we have very little progress and want more progress asap
+            return SolveOpenerMuMe(sim, step);
 
         // see what we need to finish the craft
-        var remainingProgress = sim.Craft.CraftProgress - last.Progress;
+        var remainingProgress = sim.Craft.CraftProgress - step.Progress;
         var estBasicSynthProgress = sim.BaseProgress() * 120 / 100;
         var estCarefulSynthProgress = sim.BaseProgress() * 180 / 100; // minimal, assuming no procs/buffs
         var reservedCPForProgress = remainingProgress <= estBasicSynthProgress ? 0 : 7;
         var progressDeficit = remainingProgress - estCarefulSynthProgress; // if >0, we need more progress before we can start finisher
 
-        if (last.IQStacks > 0)
+        if (step.IQStacks > 0)
         {
             // see if we can do byregot right now and top up quality
-            var byregotQuality = sim.CalculateQuality(last, CraftAction.ByregotBlessing);
-            var byregotDura = sim.GetDurabilityCost(last, CraftAction.ByregotBlessing);
-            if (last.Quality + byregotQuality >= sim.Craft.CraftQualityMin3 && last.Durability > byregotDura && last.RemainingCP >= sim.GetCPCost(last, CraftAction.ByregotBlessing) + reservedCPForProgress)
+            var byregotQuality = sim.CalculateQuality(step, CraftAction.ByregotBlessing);
+            var byregotDura = sim.GetDurabilityCost(step, CraftAction.ByregotBlessing);
+            if (step.Quality + byregotQuality >= sim.Craft.CraftQualityMin3 && step.Durability > byregotDura && step.RemainingCP >= sim.GetCPCost(step, CraftAction.ByregotBlessing) + reservedCPForProgress)
                 return CraftAction.ByregotBlessing;
         }
 
         // TODO: consider that we might want to use some touch actions after byregot's, if we have spare cp/durability...
         // TODO: if we're extremely low on CP, consider doing some careful observations to fish for tricks?
-        if (last.IQStacks == 0 && last.Quality > 0 || last.Quality >= sim.Craft.CraftQualityMin3 || last.Quality >= sim.Craft.CraftQualityMin1 && last.RemainingCP < 24 + reservedCPForProgress)
-            return SolveFinishProgress(sim, progressDeficit); // we've used byregot's, or we're at max quality anyway, or we can't byregot anymore - just finish the craft now
+        if (step.IQStacks == 0 && step.Quality > 0 || step.Quality >= sim.Craft.CraftQualityMin3 || step.Quality >= sim.Craft.CraftQualityMin1 && step.RemainingCP < 24 + reservedCPForProgress)
+            return SolveFinishProgress(sim, step, progressDeficit); // we've used byregot's, or we're at max quality anyway, or we can't byregot anymore - just finish the craft now
 
-        if (last.VenerationLeft > 0 && progressDeficit > 0)
-            return UseIfEnoughCP(sim, SolveMidProgress(sim, progressDeficit)); // we still have veneration running and need more progress, focus on that...
+        if (step.VenerationLeft > 0 && progressDeficit > 0)
+            return UseIfEnoughCP(sim, step, SolveMidProgress(sim, step, progressDeficit)); // we still have veneration running and need more progress, focus on that...
 
-        if (last.IQStacks < 10)
-            return UseIfEnoughCP(sim, SolveMidIQ(sim, progressDeficit)); // we need more iq (and maybe some progress too)
+        if (step.IQStacks < 10)
+            return UseIfEnoughCP(sim, step, SolveMidIQ(sim, step, progressDeficit)); // we need more iq (and maybe some progress too)
 
         // okay, we're at 10 iq stacks here, finisher time
         if (progressDeficit > 0)
-            return UseIfEnoughCP(sim, SolveMidProgress(sim, progressDeficit)); // we still need progress, handle that before starting finisher
+            return UseIfEnoughCP(sim, step, SolveMidProgress(sim, step, progressDeficit)); // we still need progress, handle that before starting finisher
 
         // do the finisher
-        var freeCP = last.RemainingCP - reservedCPForProgress - 24;
-        var finishAction = SolveFinishQuality(sim, freeCP);
-        if (last.RemainingCP >= sim.GetCPCost(last, finishAction))
+        var freeCP = step.RemainingCP - reservedCPForProgress - 24;
+        var finishAction = SolveFinishQuality(sim, step, freeCP);
+        if (step.RemainingCP >= sim.GetCPCost(step, finishAction))
             return finishAction;
         // we just don't have enough cp for a finisher, bail
-        return SolveFinishProgress(sim, progressDeficit);
+        return SolveFinishProgress(sim, step, progressDeficit);
     }
 
-    private CraftAction SolveOpenerMuMe(Simulator sim)
+    private CraftAction SolveOpenerMuMe(Simulator sim, StepState step)
     {
         // we don't really have any concerns about cp or durability during mume - we might end up with quite low final durability though...
-        var last = sim.Steps.Last();
-        if (last.Condition == CraftCondition.Pliant && last.MuscleMemoryLeft > MuMeMinStepsForManip && last.ManipulationLeft == 0)
+        if (step.Condition == CraftCondition.Pliant && step.MuscleMemoryLeft > MuMeMinStepsForManip && step.ManipulationLeft == 0)
             return CraftAction.Manipulation;
-        if (MuMeRequireVeneration && last.VenerationLeft == 0)
+        if (MuMeRequireVeneration && step.VenerationLeft == 0)
             return CraftAction.Veneration;
-        if (last.Condition == CraftCondition.Centered)
+        if (step.Condition == CraftCondition.Centered)
             return CraftAction.RapidSynthesis; // centered => rapid, very good value
-        var canUseIntensive = sim.CanUseAction(last, CraftAction.IntensiveSynthesis);
+        var canUseIntensive = sim.CanUseAction(step, CraftAction.IntensiveSynthesis);
         if (canUseIntensive && MuMeAllowIntensive)
             return CraftAction.IntensiveSynthesis; // good and we are allowed to spend charge on intensive
         // TODO: sturdy - veneration vs action
-        if (last.VenerationLeft == 0 && last.MuscleMemoryLeft > MuMeMinStepsForVene)
+        if (step.VenerationLeft == 0 && step.MuscleMemoryLeft > MuMeMinStepsForVene)
             return CraftAction.Veneration; // other conditions - use veneration (TODO: reconsider sturdy)
-        if (MuMeIntensiveLastResort && last.MuscleMemoryLeft == 1)
-            return canUseIntensive ? CraftAction.IntensiveSynthesis : last.HeartAndSoulAvailable ? CraftAction.HeartAndSoul : CraftAction.RapidSynthesis; // last chance
+        if (MuMeIntensiveLastResort && step.MuscleMemoryLeft == 1)
+            return canUseIntensive ? CraftAction.IntensiveSynthesis : step.HeartAndSoulAvailable ? CraftAction.HeartAndSoul : CraftAction.RapidSynthesis; // last chance
         return CraftAction.RapidSynthesis; // try rapid, we can try again if it fails
     }
 
-    private CraftAction SolveMidDurabilityManagement(Simulator sim)
+    private CraftAction SolveMidDurabilityManagement(Simulator sim, StepState step)
     {
         // during the mid phase, durability is a serious concern
-        var last = sim.Steps.Last();
-
-        if (last.ManipulationLeft > 0 && last.Durability + 5 > sim.Craft.CraftDurability)
+        if (step.ManipulationLeft > 0 && step.Durability + 5 > sim.Craft.CraftDurability)
             return CraftAction.None; // we're high on dura, doing anything here will waste manip durability
 
-        if (last.Condition == CraftCondition.Pliant)
+        if (step.Condition == CraftCondition.Pliant)
         {
             // see if we can utilize pliant for manip/mm
-            if (last.ManipulationLeft <= MidMaxPliantManipClip)
+            if (step.ManipulationLeft <= MidMaxPliantManipClip)
                 return CraftAction.Manipulation;
-            if (last.Durability + 30 + (last.ManipulationLeft > 0 ? 5 : 0) + MidMasterMendLeeway <= sim.Craft.CraftDurability)
+            if (step.Durability + 30 + (step.ManipulationLeft > 0 ? 5 : 0) + MidMasterMendLeeway <= sim.Craft.CraftDurability)
                 return CraftAction.MastersMend;
             // TODO: consider waste-not...
             return CraftAction.None;
         }
 
-        if (last.Durability <= (last.Condition == CraftCondition.Sturdy ? 5 : 10))
+        if (step.Durability <= (step.Condition == CraftCondition.Sturdy ? 5 : 10))
         {
             // we really need to do something about durability, we don't even have useful actions to perform
-            if (last.Condition == CraftCondition.Good)
+            if (step.Condition == CraftCondition.Good)
                 return CraftAction.TricksOfTrade;
-            if (last.ManipulationLeft > 0)
+            if (step.ManipulationLeft > 0)
                 return CraftAction.Observe; // just regen a bit...
             // TODO: consider careful observation to bait pliant - this sounds much worse than using them to try baiting good byregot
             return MidBaitPliantWithObserve ? CraftAction.Observe : CraftAction.Manipulation; // pliant will save 48cp, which is almost 7 observes, so looks worthwhile?
@@ -182,37 +183,35 @@ public class Solver
         return CraftAction.None;
     }
 
-    private CraftAction SolveProgress(Simulator sim, int progressDeficit)
+    private CraftAction SolveProgress(Simulator sim, StepState step, int progressDeficit)
     {
         // we are typically concerned with durability here, cp should be fine
-        var last = sim.Steps.Last();
-        if (MidAllowVeneration && last.VenerationLeft == 0 && progressDeficit > sim.CalculateProgress(last, CraftAction.RapidSynthesis))
+        if (MidAllowVeneration && step.VenerationLeft == 0 && progressDeficit > sim.CalculateProgress(step, CraftAction.RapidSynthesis))
             return CraftAction.Veneration; // TODO: reconsider this heuristic (we've reached 10 iq and still lack tons of progress)
-        if (progressDeficit <= sim.CalculateProgress(last, CraftAction.PrudentSynthesis))
-            return SafeCraftAction(sim, CraftAction.PrudentSynthesis); // TODO: reconsider (minimal cost action when we need just a little more progress)
-        if (last.Condition == CraftCondition.Good && MidAllowIntensive)
-            return SafeCraftAction(sim, CraftAction.IntensiveSynthesis);
-        return SafeCraftAction(sim, CraftAction.RapidSynthesis);
+        if (progressDeficit <= sim.CalculateProgress(step, CraftAction.PrudentSynthesis))
+            return SafeCraftAction(sim, step, CraftAction.PrudentSynthesis); // TODO: reconsider (minimal cost action when we need just a little more progress)
+        if (step.Condition == CraftCondition.Good && MidAllowIntensive)
+            return SafeCraftAction(sim, step, CraftAction.IntensiveSynthesis);
+        return SafeCraftAction(sim, step, CraftAction.RapidSynthesis);
     }
 
-    private CraftAction SolveMidProgress(Simulator sim, int progressDeficit)
+    private CraftAction SolveMidProgress(Simulator sim, StepState step, int progressDeficit)
     {
         // focus on progress (either veneration is still up, or we want to move to finisher phase asap)
-        var duraAction = SolveMidDurabilityManagement(sim); // manage durability
+        var duraAction = SolveMidDurabilityManagement(sim, step); // manage durability
         if (duraAction != CraftAction.None)
             return duraAction;
-        return SolveProgress(sim, progressDeficit);
+        return SolveProgress(sim, step, progressDeficit);
     }
 
-    private CraftAction SolveFinishProgress(Simulator sim, int progressDeficit)
+    private CraftAction SolveFinishProgress(Simulator sim, StepState step, int progressDeficit)
     {
-        var last = sim.Steps.Last();
-        if (progressDeficit > 0 && last.Durability > 10)
+        if (progressDeficit > 0 && step.Durability > 10)
         {
-            var progressAction = SolveProgress(sim, progressDeficit);
-            var progressAfterAction = last.Progress + sim.CalculateProgress(last, progressAction);
+            var progressAction = SolveProgress(sim, step, progressDeficit);
+            var progressAfterAction = step.Progress + sim.CalculateProgress(step, progressAction);
             var willFinishWithBasic = progressAfterAction + sim.BaseProgress() * 120 / 100 >= sim.Craft.CraftProgress;
-            if (last.RemainingCP >= sim.GetCPCost(last, progressAction) + (willFinishWithBasic ? 0 : 7))
+            if (step.RemainingCP >= sim.GetCPCost(step, progressAction) + (willFinishWithBasic ? 0 : 7))
                 return progressAction;
         }
 
@@ -225,12 +224,12 @@ public class Solver
         // - prudent + careful = 360p, 25 cp, >5 dura
         // - careful + basic = 300p, 7 cp, >10 dura
         // - prudent + prudent + basic = 480p, 36 cp, >10 dura - but we would probably want to byregot instead?
-        return sim.GetCPCost(last, CraftAction.CarefulSynthesis) < last.RemainingCP ? CraftAction.CarefulSynthesis : CraftAction.BasicSynthesis;
+        return sim.GetCPCost(step, CraftAction.CarefulSynthesis) < step.RemainingCP ? CraftAction.CarefulSynthesis : CraftAction.BasicSynthesis;
     }
 
-    private CraftAction SolveMidIQ(Simulator sim, int progressDeficit)
+    private CraftAction SolveMidIQ(Simulator sim, StepState step, int progressDeficit)
     {
-        var duraAction = SolveMidDurabilityManagement(sim);
+        var duraAction = SolveMidDurabilityManagement(sim, step);
         if (duraAction != CraftAction.None)
             return duraAction; // manage durability
 
@@ -241,56 +240,53 @@ public class Solver
         // - precise touch is 21cp/iq (much better on pliant/sturdy with h&s), but requires good/h&s
         // - prudent touch is 37cp/iq (25 on pliant)
         // this means sturdy hasty (unreliable) = precise > pliant prudent > centered hasty (85%) > sturdy combo >> prudent > hasty (unreliable) > normal combo
-        var last = sim.Steps.Last();
-        if (last.Condition == CraftCondition.Centered)
+        if (step.Condition == CraftCondition.Centered)
         {
             if (progressDeficit > 0)
-                return SafeCraftAction(sim, CraftAction.RapidSynthesis); // we still need more progress, this seems to be the best use of the centered
+                return SafeCraftAction(sim, step, CraftAction.RapidSynthesis); // we still need more progress, this seems to be the best use of the centered
             if (MidAllowCenteredHasty)
                 return CraftAction.HastyTouch;
             // otherwise - just ignore this condition
         }
 
         // precise is the best value - and there's no point in holding h&s, the earlier we use it the better
-        if (sim.CanUseAction(last, CraftAction.PreciseTouch))
+        if (sim.CanUseAction(step, CraftAction.PreciseTouch))
             return CraftAction.PreciseTouch;
-        else if (last.HeartAndSoulAvailable)
+        else if (step.HeartAndSoulAvailable)
             return CraftAction.HeartAndSoul;
 
-        if (last.Condition == CraftCondition.Sturdy)
-            return MidAllowSturdyHasty ? CraftAction.HastyTouch : sim.NextTouchCombo(last);
+        if (step.Condition == CraftCondition.Sturdy)
+            return MidAllowSturdyHasty ? CraftAction.HastyTouch : sim.NextTouchCombo(step);
 
         // just use prudent
         return CraftAction.PrudentTouch;
     }
 
-    private CraftAction SolveFinishDurabilityManagementPliant(Simulator sim, int availableCP)
+    private CraftAction SolveFinishDurabilityManagementPliant(Simulator sim, StepState step, int availableCP)
     {
-        var last = sim.Steps.Last();
-        var effectiveDura = last.Durability + last.ManipulationLeft * 5; // since we are going to use a lot of non-dura actions (buffs/observes), this is what really matters
+        var effectiveDura = step.Durability + step.ManipulationLeft * 5; // since we are going to use a lot of non-dura actions (buffs/observes), this is what really matters
 
         // estimate how much cp do we need to utilize current durability
         var estHalfComboCost = 34; // rough baseline - every 10 extra dura is one half-combo, which requires 34cp (1/2 inno + observe+focused) - TODO: should it also include 1/2 GS?
         var estNumHalfCombosWithCurrentDura = effectiveDura <= 20 ? 0 : (effectiveDura + 9) / 10; // 11-20 dura is 0 half-combos, 21-30 is 1, ...
         var estCPNeededToUtilizeCurrentDura = estHalfComboCost * estNumHalfCombosWithCurrentDura;
 
-        if (last.ManipulationLeft <= 1 && availableCP >= 48 + estCPNeededToUtilizeCurrentDura + 4 * estHalfComboCost)
+        if (step.ManipulationLeft <= 1 && availableCP >= 48 + estCPNeededToUtilizeCurrentDura + 4 * estHalfComboCost)
             return CraftAction.Manipulation;
         if (availableCP >= 44 + estCPNeededToUtilizeCurrentDura + 3 * estHalfComboCost && effectiveDura + 30 <= sim.Craft.CraftDurability)
             return CraftAction.MastersMend;
         return CraftAction.None;
     }
 
-    private CraftAction SolveFinishQualityStart(Simulator sim, int freeCP)
+    private CraftAction SolveFinishQualityStart(Simulator sim, StepState step, int freeCP)
     {
         // assume we don't have GS/inno
         // finisher combo not started yet, it's best chance to regain some dura if we have enough cp to utilize it
         // we need around 30 effective durability to start a new combo
-        var last = sim.Steps.Last();
-        if (last.Condition == CraftCondition.Good)
+        if (step.Condition == CraftCondition.Good)
             return CraftAction.TricksOfTrade; // not worth doing precise without buffs
 
-        var effectiveDura = last.Durability + last.ManipulationLeft * 5; // since we are going to use a lot of non-dura actions (buffs/observes), this is what really matters
+        var effectiveDura = step.Durability + step.ManipulationLeft * 5; // since we are going to use a lot of non-dura actions (buffs/observes), this is what really matters
         var cpToSpendOnQuality = freeCP - 50; // we'll need to get gs+inno up for byregot, rest is free to spend
         // TODO: centered/sturdy - consider doing hasty if we have durability to spare?
 
@@ -298,10 +294,10 @@ public class Solver
         {
             // we're very low on durability - not enough to even byregot
             // try to recover some, even if we can't utilize it well later - at worst we can do some hasty's
-            if (last.Condition != CraftCondition.Pliant && freeCP >= 44)
+            if (step.Condition != CraftCondition.Pliant && freeCP >= 44)
             {
                 // see if we can try baiting pliant by careful observations
-                if (FinisherBaitPliantManip && last.CarefulObservationLeft > 0)
+                if (FinisherBaitPliantManip && step.CarefulObservationLeft > 0)
                     return CraftAction.CarefulObservation;
                 // we really don't want to waste cp on non-pliant manip/mm, so try exploring some alternatives
                 // one option is to use some (inno) finesse, this is quite expensive cp-wise, but slightly more effective than using full-cost manip + focused+observe
@@ -310,35 +306,35 @@ public class Solver
                     return CraftAction.Innovation;
                 // TODO: consider baiting pliant with normal observes?
             }
-            if (last.ManipulationLeft <= 1 && freeCP >= sim.GetCPCost(last, CraftAction.Manipulation))
+            if (step.ManipulationLeft <= 1 && freeCP >= sim.GetCPCost(step, CraftAction.Manipulation))
                 return CraftAction.Manipulation;
-            if (freeCP >= sim.GetCPCost(last, CraftAction.MastersMend))
+            if (freeCP >= sim.GetCPCost(step, CraftAction.MastersMend))
                 return CraftAction.MastersMend;
-            if (last.Condition != CraftCondition.Pliant && freeCP >= 44 + 7)
+            if (step.Condition != CraftCondition.Pliant && freeCP >= 44 + 7)
                 return CraftAction.Observe; // we don't have enough for mm, but might get lucky if we try baiting it with observe...
             // try to regain some cp via tricks
-            var emergencyAction = EmergencyRestoreCP(sim);
+            var emergencyAction = EmergencyRestoreCP(sim, step);
             if (emergencyAction != CraftAction.None)
                 return emergencyAction;
             // we don't even have enough cp for mm - oh well, get some buff up, otherwise pray for sturdy/good
-            if (sim.GetDurabilityCost(last, CraftAction.ByregotBlessing) < last.Durability) // sturdy, so byregot asap - we won't get a better chance to salvage the situation
+            if (sim.GetDurabilityCost(step, CraftAction.ByregotBlessing) < step.Durability) // sturdy, so byregot asap - we won't get a better chance to salvage the situation
                 return CraftAction.ByregotBlessing;
-            if (freeCP >= sim.GetCPCost(last, CraftAction.GreatStrides))
+            if (freeCP >= sim.GetCPCost(step, CraftAction.GreatStrides))
                 return CraftAction.GreatStrides;
-            if (freeCP >= sim.GetCPCost(last, CraftAction.Innovation))
+            if (freeCP >= sim.GetCPCost(step, CraftAction.Innovation))
                 return CraftAction.Innovation;
             // nope, too little cp for anything... try observes
-            if (freeCP >= sim.GetCPCost(last, CraftAction.Observe))
+            if (freeCP >= sim.GetCPCost(step, CraftAction.Observe))
                 return CraftAction.Observe;
-            if (last.CarefulObservationLeft > 0)
+            if (step.CarefulObservationLeft > 0)
                 return CraftAction.CarefulObservation;
             // i give up :)
-            return SolveFinishProgress(sim, 0);
+            return SolveFinishProgress(sim, step, 0);
         }
-        else if (last.Condition == CraftCondition.Pliant)
+        else if (step.Condition == CraftCondition.Pliant)
         {
             // okay, this is a good chance to recover some durability if we can utilize it
-            var duraAction = SolveFinishDurabilityManagementPliant(sim, cpToSpendOnQuality);
+            var duraAction = SolveFinishDurabilityManagementPliant(sim, step, cpToSpendOnQuality);
             if (duraAction != CraftAction.None)
                 return duraAction;
 
@@ -349,13 +345,13 @@ public class Solver
             if (freeCP >= 9)
                 return CraftAction.Innovation;
             // we just don't have cp at all - use byregot
-            return BestByregot(sim);
+            return BestByregot(sim, step);
         }
         else if (effectiveDura <= 20)
         {
             // we can do byregot, but not much else - see whether we can restore some durability
             // see if we can try baiting pliant by careful observations
-            if (FinisherBaitPliantManip && last.CarefulObservationLeft > 0 && last.ManipulationLeft <= 1)
+            if (FinisherBaitPliantManip && step.CarefulObservationLeft > 0 && step.ManipulationLeft <= 1)
                 return CraftAction.CarefulObservation;
 
             // our options:
@@ -378,7 +374,7 @@ public class Solver
         }
     }
 
-    private CraftAction SolveFinishQuality(Simulator sim, int freeCP)
+    private CraftAction SolveFinishQuality(Simulator sim, StepState step, int freeCP)
     {
         // some rough estimations (potency numbers are pre-iq for simplicity, since it just effectively doubles the base quality rate at this point):
         // - typically after iq stacks we need ~2250p worth of quality
@@ -419,49 +415,48 @@ public class Solver
         // -- gs + inno + half-combo - needs 57cp+ and 10+ dura, gives 375p quality; it's something to consider only if inno is not running now
         // -- extra cp/durability can be burned by doing multiple half-combos, but that's a decision to be made on later steps
         // -- if we have tons of cp but not enough durability, we might want to manip; this is reasonable if we have enough cp to do extra 4 half-combos (136 cp minimum + manip cost)
-        var last = sim.Steps.Last();
-        var cpToSpendOnQuality = freeCP - 32 - (last.InnovationLeft > 2 ? 0 : 18); // we'll need to get gs up for byregot and maybe reapply inno if we do not go for the quality finisher now
+        var cpToSpendOnQuality = freeCP - 32 - (step.InnovationLeft > 2 ? 0 : 18); // we'll need to get gs up for byregot and maybe reapply inno if we do not go for the quality finisher now
 
-        if (last.InnovationLeft == 0)
+        if (step.InnovationLeft == 0)
         {
-            if (last.GreatStridesLeft == 0)
+            if (step.GreatStridesLeft == 0)
             {
-                return SolveFinishQualityStart(sim, freeCP);
+                return SolveFinishQualityStart(sim, step, freeCP);
             }
             else
             {
                 // GS without inno, see if we want to use it asap
-                if (last.Condition == CraftCondition.Pliant)
+                if (step.Condition == CraftCondition.Pliant)
                 {
                     // pliant after GS - this is a decent chance to recover some durability if we need it
                     // if we're at last step of GS for whatever reason - assume it's ok to waste it...
-                    var duraAction = SolveFinishDurabilityManagementPliant(sim, cpToSpendOnQuality);
+                    var duraAction = SolveFinishDurabilityManagementPliant(sim, step, cpToSpendOnQuality);
                     if (duraAction != CraftAction.None)
                         return duraAction;
                 }
 
-                if (last.Condition == CraftCondition.Good && CanUseActionSafelyInFinisher(sim, CraftAction.PreciseTouch, cpToSpendOnQuality))
+                if (step.Condition == CraftCondition.Good && CanUseActionSafelyInFinisher(sim, step, CraftAction.PreciseTouch, cpToSpendOnQuality))
                     return CraftAction.PreciseTouch;
-                if (last.PrevComboAction == CraftAction.Observe && CanUseActionSafelyInFinisher(sim, CraftAction.FocusedTouch, cpToSpendOnQuality))
+                if (step.PrevComboAction == CraftAction.Observe && CanUseActionSafelyInFinisher(sim, step, CraftAction.FocusedTouch, cpToSpendOnQuality))
                     return CraftAction.FocusedTouch; // this is weird, why would we do gs->observe?.. maybe we're low on cp?
 
-                if (last.GreatStridesLeft == 1)
+                if (step.GreatStridesLeft == 1)
                 {
                     // we really want to use gs now on other touches (prudent/finesse), doing inno now would waste it
                     // TODO: hasty? basic combo? prep?
-                    if (CanUseActionSafelyInFinisher(sim, CraftAction.PrudentTouch, cpToSpendOnQuality))
+                    if (CanUseActionSafelyInFinisher(sim, step, CraftAction.PrudentTouch, cpToSpendOnQuality))
                         return CraftAction.PrudentTouch;
-                    if (cpToSpendOnQuality >= sim.GetCPCost(last, CraftAction.TrainedFinnesse))
+                    if (cpToSpendOnQuality >= sim.GetCPCost(step, CraftAction.TrainedFinnesse))
                         return CraftAction.TrainedFinnesse;
                 }
                 else
                 {
-                    if (cpToSpendOnQuality >= sim.GetCPCost(last, CraftAction.Innovation))
+                    if (cpToSpendOnQuality >= sim.GetCPCost(step, CraftAction.Innovation))
                         return CraftAction.Innovation;
                 }
 
                 // last condition failing means that we have very low cp, try to recover somehow (tricks/byregot/...)
-                return SolveFinishQualityStart(sim, freeCP);
+                return SolveFinishQualityStart(sim, step, freeCP);
             }
         }
         else
@@ -476,30 +471,30 @@ public class Solver
             // - finesse
             // - gs on pliant + some touch
             // - hasty on low cp to burn dura
-            if (last.Condition == CraftCondition.Good)
+            if (step.Condition == CraftCondition.Good)
             {
                 // good options are prep and precise (focused after observe is the same as precise, so don't bother)
                 // prep is ~2x the cost, quality is 525 vs 393.75 (no gs) or 875 vs 656.25 (with gs), meaning it's worth an extra 131.25/218.75p
                 // we can compare good prep with good precise + focused combo, which is an extra 225p
                 // all in all, it feels like prep is only worth it under gs?..
-                if (FinisherAllowPrep && last.GreatStridesLeft > 0 && CanUseActionSafelyInFinisher(sim, CraftAction.PreparatoryTouch, cpToSpendOnQuality))
+                if (FinisherAllowPrep && step.GreatStridesLeft > 0 && CanUseActionSafelyInFinisher(sim, step, CraftAction.PreparatoryTouch, cpToSpendOnQuality))
                     return CraftAction.PreparatoryTouch;
                 // otherwise use precise if possible
-                if (CanUseActionSafelyInFinisher(sim, CraftAction.PreciseTouch, cpToSpendOnQuality))
+                if (CanUseActionSafelyInFinisher(sim, step, CraftAction.PreciseTouch, cpToSpendOnQuality))
                     return CraftAction.PreciseTouch;
                 // otherwise ignore good condition and see what else can we do
             }
-            else if (last.Condition == CraftCondition.Pliant && last.GreatStridesLeft != 1)
+            else if (step.Condition == CraftCondition.Pliant && step.GreatStridesLeft != 1)
             {
                 // we won't waste gs if we do manip/mm now - see if we want it
                 // we don't really care about wasting last step of inno, it's no different from wasting any other step
-                var duraAction = SolveFinishDurabilityManagementPliant(sim, cpToSpendOnQuality);
+                var duraAction = SolveFinishDurabilityManagementPliant(sim, step, cpToSpendOnQuality);
                 if (duraAction != CraftAction.None)
                     return duraAction;
                 // otherwise ignore pliant and just save some cp on touch actions
             }
 
-            if (last.PrevComboAction == CraftAction.Observe && CanUseActionSafelyInFinisher(sim, CraftAction.FocusedTouch, cpToSpendOnQuality))
+            if (step.PrevComboAction == CraftAction.Observe && CanUseActionSafelyInFinisher(sim, step, CraftAction.FocusedTouch, cpToSpendOnQuality))
                 return CraftAction.FocusedTouch; // complete focused half-combo
 
             // try spending some durability for using some other half-combo action:
@@ -508,63 +503,59 @@ public class Solver
             // - pliant gs (+ prudent) is extra ~66p for 16cp, so it's an option i guess, especially considering we might get some better condition (TODO consider this)
             // - finesse is 100p for 32cp, which is even less efficient, but does not cost durability
             // - hasty is a fine way to spend excess durability if low on cp
-            if (last.InnovationLeft != 1 && last.GreatStridesLeft != 1 && last.Durability > (last.ManipulationLeft > 0 ? 5 : 10) && last.Durability + 5 * last.ManipulationLeft > 20 && cpToSpendOnQuality >= sim.GetCPCost(last, CraftAction.Observe) + 18)
+            if (step.InnovationLeft != 1 && step.GreatStridesLeft != 1 && step.Durability > (step.ManipulationLeft > 0 ? 5 : 10) && step.Durability + 5 * step.ManipulationLeft > 20 && cpToSpendOnQuality >= sim.GetCPCost(step, CraftAction.Observe) + 18)
                 return CraftAction.Observe;
-            if (CanUseActionSafelyInFinisher(sim, CraftAction.PrudentTouch, cpToSpendOnQuality))
+            if (CanUseActionSafelyInFinisher(sim, step, CraftAction.PrudentTouch, cpToSpendOnQuality))
                 return CraftAction.PrudentTouch;
-            if (cpToSpendOnQuality >= sim.GetCPCost(last, CraftAction.TrainedFinnesse))
+            if (cpToSpendOnQuality >= sim.GetCPCost(step, CraftAction.TrainedFinnesse))
                 return CraftAction.TrainedFinnesse;
             // see if we can regain some cp via tricks
-            var emergencyAction = EmergencyRestoreCP(sim);
+            var emergencyAction = EmergencyRestoreCP(sim, step);
             if (emergencyAction != CraftAction.None)
                 return emergencyAction;
-            if (CanUseActionSafelyInFinisher(sim, CraftAction.HastyTouch, cpToSpendOnQuality))
+            if (CanUseActionSafelyInFinisher(sim, step, CraftAction.HastyTouch, cpToSpendOnQuality))
                 return CraftAction.HastyTouch; // better than nothing i guess...
 
             // ok, we're out of options - use gs + byregot
-            if (last.GreatStridesLeft == 0 && freeCP >= sim.GetCPCost(last, CraftAction.GreatStrides))
+            if (step.GreatStridesLeft == 0 && freeCP >= sim.GetCPCost(step, CraftAction.GreatStrides))
                 return CraftAction.GreatStrides;
-            return BestByregot(sim);
+            return BestByregot(sim, step);
         }
     }
 
-    private CraftAction BestByregot(Simulator sim)
+    private CraftAction BestByregot(Simulator sim, StepState step)
     {
         // if we still have careful observations, we might wanna try baiting good
         // TODO: sturdy byregot if we're at critical dura/cp (e.g. 10 dura and no manip/no cp for observes)
-        var last = sim.Steps.Last();
-        return !FinisherBaitGoodByregot || last.CarefulObservationLeft == 0 || (last.Condition is CraftCondition.Good or CraftCondition.Excellent) ? CraftAction.ByregotBlessing : CraftAction.CarefulObservation;
+        return !FinisherBaitGoodByregot || step.CarefulObservationLeft == 0 || (step.Condition is CraftCondition.Good or CraftCondition.Excellent) ? CraftAction.ByregotBlessing : CraftAction.CarefulObservation;
     }
 
-    private bool CanUseActionSafelyInFinisher(Simulator sim, CraftAction action, int availableCP)
+    private bool CanUseActionSafelyInFinisher(Simulator sim, StepState step, CraftAction action, int availableCP)
     {
-        var last = sim.Steps.Last();
-        var duraCost = sim.GetDurabilityCost(last, action);
-        return last.Durability > duraCost && last.Durability + 5 * last.ManipulationLeft - duraCost > 10 && availableCP >= sim.GetCPCost(last, action);
+        var duraCost = sim.GetDurabilityCost(step, action);
+        return step.Durability > duraCost && step.Durability + 5 * step.ManipulationLeft - duraCost > 10 && availableCP >= sim.GetCPCost(step, action);
     }
 
-    public CraftAction SafeCraftAction(Simulator sim, CraftAction action) => sim.WillFinishCraft(sim.Steps.Last(), action) ? CraftAction.FinalAppraisal : action;
+    public CraftAction SafeCraftAction(Simulator sim, StepState step, CraftAction action) => sim.WillFinishCraft(step, action) ? CraftAction.FinalAppraisal : action;
 
     // try to use tricks, if needed use h&s
-    public CraftAction EmergencyRestoreCP(Simulator sim)
+    public CraftAction EmergencyRestoreCP(Simulator sim, StepState step)
     {
-        var last = sim.Steps.Last();
-        if (sim.CanUseAction(last, CraftAction.TricksOfTrade))
+        if (sim.CanUseAction(step, CraftAction.TricksOfTrade))
             return CraftAction.TricksOfTrade;
-        if (last.HeartAndSoulAvailable)
+        if (step.HeartAndSoulAvailable)
             return CraftAction.HeartAndSoul;
-        if (EmergencyCPBaitGood && last.CarefulObservationLeft > 0)
+        if (EmergencyCPBaitGood && step.CarefulObservationLeft > 0)
             return CraftAction.CarefulObservation; // try baiting good?..
         return CraftAction.None;
     }
 
     // if not enough cp, it's an emergency (e.g. out of cp mid craft due to really shit luck), try tricks or just bail...
-    public CraftAction UseIfEnoughCP(Simulator sim, CraftAction action)
+    public CraftAction UseIfEnoughCP(Simulator sim, StepState step, CraftAction action)
     {
-        var last = sim.Steps.Last();
-        if (last.RemainingCP >= sim.GetCPCost(last, action))
+        if (step.RemainingCP >= sim.GetCPCost(step, action))
             return action;
-        var emergencyAction = EmergencyRestoreCP(sim);
+        var emergencyAction = EmergencyRestoreCP(sim, step);
         if (emergencyAction != CraftAction.None)
             return emergencyAction;
         // no idea...

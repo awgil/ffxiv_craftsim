@@ -1,5 +1,9 @@
-﻿using Dalamud.Interface.Utility.Raii;
+﻿using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Interface.Utility.Raii;
+using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using ImGuiNET;
+using System;
 using System.Collections.Generic;
 using System.Text.Json.Nodes;
 
@@ -7,25 +11,53 @@ namespace craftsim;
 
 class TransitionDB
 {
+    private GameCraftState _game;
     private Dictionary<string, TransitionTable> _transitions = new();
     private TransitionTable? _active;
     private string _activeName = "";
     private string _newName = "";
 
-    public TransitionDB()
+    private DateTime _throttleAction;
+    private int _prevStepCount;
+    private CraftCondition _prevCond;
+    public bool Auto;
+
+    public TransitionDB(GameCraftState game)
     {
+        _game = game;
         LoadFromJSON(Service.Config.TransitionDB);
     }
 
     public void Update()
     {
-        _active?.Update();
+        var step = _game.CurStep?.Index ?? 0;
+        var cond = _game.CurStep?.Condition ?? CraftCondition.Normal;
+        if (step != _prevStepCount)
+        {
+            if (step > 1 && _prevStepCount != 0)
+                _active?.RecordTransition((int)_prevCond, (int)cond);
+            _prevStepCount = step;
+            _prevCond = cond;
+        }
+
+        if (Auto && step > 0 && Service.Condition[ConditionFlag.Crafting] && !Service.Condition[ConditionFlag.Crafting40] && DateTime.Now >= _throttleAction)
+            Step();
     }
 
     public void Draw()
     {
         DrawCombo();
         DrawRenameNew();
+
+        var player = Service.ClientState.LocalPlayer;
+        if (_prevStepCount > 0 && player != null)
+        {
+            ImGui.TextUnformatted($"Step: {_prevStepCount}, Condition: {_prevCond}, CP: {player.CurrentCp}");
+            ImGui.Checkbox("Auto repeat", ref Auto);
+            if (ImGui.Button("Step"))
+                Step();
+        }
+
         _active?.Draw();
     }
 
@@ -39,6 +71,7 @@ class TransitionDB
 
     public void LoadFromJSON(JsonObject json)
     {
+        Auto = false;
         _transitions.Clear();
         foreach (var (k, v) in json)
         {
@@ -46,7 +79,6 @@ class TransitionDB
             if (varr != null)
                 _transitions[k] = new TransitionTable(varr);
         }
-        _active?.Deactivate();
         _active = null;
         _activeName = "";
     }
@@ -58,7 +90,7 @@ class TransitionDB
         {
             if (ImGui.Selectable("", _active == null))
             {
-                _active?.Deactivate();
+                Auto = false;
                 _active = null;
                 _activeName = "";
             }
@@ -66,7 +98,7 @@ class TransitionDB
             {
                 if (ImGui.Selectable(k, _active == v))
                 {
-                    _active?.Deactivate();
+                    Auto = false;
                     _active = v;
                     _activeName = k;
                 }
@@ -104,11 +136,17 @@ class TransitionDB
             ImGui.SameLine();
             if (ImGui.Button("New"))
             {
-                _active?.Deactivate();
+                Auto = false;
                 _active = new();
                 _activeName = _newName;
                 _transitions[_newName] = _active;
             }
         }
+    }
+
+    private void Step()
+    {
+        _game.UseAction(_prevCond == CraftCondition.Good ? CraftAction.TricksOfTrade : Service.ClientState.LocalPlayer?.CurrentCp >= 7 ? CraftAction.Observe : CraftAction.BasicSynthesis);
+        _throttleAction = DateTime.Now.AddSeconds(0.5);
     }
 }

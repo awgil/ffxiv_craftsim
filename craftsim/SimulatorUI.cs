@@ -1,6 +1,7 @@
 ﻿using Dalamud.Interface.Utility.Raii;
 using ImGuiNET;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
@@ -12,7 +13,8 @@ public class SimulatorUI
     private int _seed = 0;
     private CraftState _craft;
     private Simulator? _sim;
-    private ActionResult _forcedResult;
+    private List<(StepState state, CraftAction action, bool success)> _steps = new();
+    private ForcedResult _forcedResult;
     private Solver _solver = new();
 
     public SimulatorUI(CraftState craft)
@@ -24,49 +26,46 @@ public class SimulatorUI
     {
         if (ImGui.Button("Restart!"))
         {
-            _seed = _rng.Next();
-            _sim = new(_craft, _seed);
+            Restart(_rng.Next());
         }
         ImGui.SameLine();
         if (ImGui.Button("Restart and solve"))
         {
-            _seed = _rng.Next();
-            _sim = new(_craft, _seed);
-            _solver.Solve(_sim);
+            Restart(_rng.Next());
+            SolveRest();
         }
         ImGui.SameLine();
         if (ImGui.Button("Restart and solve until error"))
         {
             do
             {
-                _seed = _rng.Next();
-                _sim = new(_craft, _seed);
-                _solver.Solve(_sim);
+                Restart(_rng.Next());
+                SolveRest();
             }
-            while (_sim.Status() is not CraftStatus.InProgress/* and not CraftStatus.FailedDurability*/);
+            while (_sim!.Status(_steps.Last().state) is not CraftStatus.InProgress/* and not CraftStatus.FailedDurability*/);
         }
         ImGui.SameLine();
         if (ImGui.Button($"Restart with seed:"))
-            _sim = new(_craft, _seed);
+            Restart(_seed);
         ImGui.SameLine();
         ImGui.InputInt("###Seed", ref _seed);
         if (_sim == null)
             return;
 
         if (ImGui.Button("Solve next"))
-            _sim.Execute(_solver.SolveNextStep(_sim));
+            SolveNext();
         ImGui.SameLine();
         if (ImGui.Button("Solve all"))
-            _solver.Solve(_sim);
+            SolveRest();
         ImGui.SameLine();
-        ImGui.TextUnformatted($"Suggestion: {_solver.SolveNextStep(_sim)}");
+        ImGui.TextUnformatted($"Suggestion: {_solver.SolveNextStep(_sim, _steps.Last().state)}");
 
-        var status = _sim.Status();
+        var status = _sim.Status(_steps.Last().state);
         ImGui.TextUnformatted($"{status}; base progress = {_sim.BaseProgress()}, base quality = {_sim.BaseQuality()}");
         if (status == CraftStatus.InProgress && ImGui.CollapsingHeader("Manual actions"))
         {
             int cntr = 0;
-            var curStep = _sim.Steps.Last();
+            var curStep = _steps.Last().state;
             foreach (var opt in Enum.GetValues(typeof(CraftAction)).Cast<CraftAction>())
             {
                 if (opt == CraftAction.None)
@@ -77,8 +76,8 @@ public class SimulatorUI
                 using var dis = ImRaii.Disabled(!_sim.CanUseAction(curStep, opt) || curStep.RemainingCP < _sim.GetCPCost(curStep, opt));
                 if (ImGui.Button($"{opt} ({_sim.GetCPCost(curStep, opt)}cp, {_sim.GetDurabilityCost(curStep, opt)}dur)"))
                 {
-                    _sim.Execute(opt, _forcedResult);
-                    _forcedResult = ActionResult.Random;
+                    _sim.Execute(curStep, opt, _forcedResult);
+                    _forcedResult = ForcedResult.Random;
                 }
             }
 
@@ -100,7 +99,7 @@ public class SimulatorUI
             {
                 if (combo)
                 {
-                    foreach (var opt in Enum.GetValues(typeof(ActionResult)).Cast<ActionResult>())
+                    foreach (var opt in Enum.GetValues(typeof(ForcedResult)).Cast<ForcedResult>())
                     {
                         if (ImGui.Selectable(opt.ToString(), _forcedResult == opt))
                         {
@@ -111,31 +110,59 @@ public class SimulatorUI
             }
         }
 
-        foreach (var step in _sim.Steps)
+        foreach (var step in _steps)
         {
-            DrawProgress(step.Progress, _craft.CraftProgress);
+            DrawProgress(step.state.Progress, _craft.CraftProgress);
             ImGui.SameLine();
-            DrawProgress(step.Quality, _craft.CraftQualityMax);
+            DrawProgress(step.state.Quality, _craft.CraftQualityMax);
             ImGui.SameLine();
-            DrawProgress(step.Durability, _craft.CraftDurability);
+            DrawProgress(step.state.Durability, _craft.CraftDurability);
             ImGui.SameLine();
-            DrawProgress(step.RemainingCP, _craft.StatCP);
+            DrawProgress(step.state.RemainingCP, _craft.StatCP);
             ImGui.SameLine();
 
-            var sb = new StringBuilder($"{step.Condition}; IQ:{step.IQStacks}");
-            AddBuff(sb, "WN", step.WasteNotLeft);
-            AddBuff(sb, "Manip", step.ManipulationLeft);
-            AddBuff(sb, "GS", step.GreatStridesLeft);
-            AddBuff(sb, "Inno", step.InnovationLeft);
-            AddBuff(sb, "Vene", step.VenerationLeft);
-            AddBuff(sb, "MuMe", step.MuscleMemoryLeft);
-            AddBuff(sb, "FA", step.FinalAppraisalLeft);
-            if (step.HeartAndSoulActive)
+            var sb = new StringBuilder($"{step.state.Condition}; IQ:{step.state.IQStacks}");
+            AddBuff(sb, "WN", step.state.WasteNotLeft);
+            AddBuff(sb, "Manip", step.state.ManipulationLeft);
+            AddBuff(sb, "GS", step.state.GreatStridesLeft);
+            AddBuff(sb, "Inno", step.state.InnovationLeft);
+            AddBuff(sb, "Vene", step.state.VenerationLeft);
+            AddBuff(sb, "MuMe", step.state.MuscleMemoryLeft);
+            AddBuff(sb, "FA", step.state.FinalAppraisalLeft);
+            if (step.state.HeartAndSoulActive)
                 sb.Append(" HnS");
-            if (step.Action != CraftAction.None)
-                sb.Append($"; used {step.Action}{(step.ActionSucceeded ? "" : " (fail)")}");
+            if (step.action != CraftAction.None)
+                sb.Append($"; used {step.action}{(step.success ? "" : " (fail)")}");
             ImGui.TextUnformatted(sb.ToString());
         }
+    }
+
+    private void Restart(int seed)
+    {
+        _seed = seed;
+        _sim = new(_craft, seed);
+        _steps.Clear();
+        _steps.Add((_sim.CreateInitial(), CraftAction.None, false));
+    }
+
+    private bool SolveNext()
+    {
+        if (_sim == null)
+            return false;
+        var state = _steps.Last().state;
+        var action = _solver.SolveNextStep(_sim, state);
+        var (res, next) = _sim.Execute(state, action);
+        if (res == ExecuteResult.CantUse)
+            return false;
+        _steps[_steps.Count - 1] = (state, action, res == ExecuteResult.Succeeded);
+        _steps.Add((next, CraftAction.None, false));
+        return true;
+    }
+
+    private void SolveRest()
+    {
+        while (SolveNext())
+            ;
     }
 
     private void DrawProgress(int a, int b) => ImGui.ProgressBar((float)a / b, new(150, 0), $"{a * 100.0f / b:f2}% ({a}/{b})");

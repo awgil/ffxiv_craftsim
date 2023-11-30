@@ -1,61 +1,7 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
 
 namespace craftsim;
-
-public class CraftState
-{
-    public int StatCraftsmanship;
-    public int StatControl;
-    public int StatCP;
-    public int StatLevel;
-    public bool Specialist;
-    public bool Splendorous;
-    public bool CraftExpert;
-    public int CraftLevel; // Recipe.RecipeLevelTable.ClassJobLevel
-    public int CraftDurability; // Recipe.RecipeLevelTable.Durability * Recipe.DurabilityFactor / 100
-    public int CraftProgress; // Recipe.RecipeLevelTable.Difficulty * Recipe.DifficultyFactor / 100
-    public int CraftProgressDivider; // Recipe.RecipeLevelTable.ProgressDivider
-    public int CraftProgressModifier; // Recipe.RecipeLevelTable.ProgressModifier
-    public int CraftQualityDivider; // Recipe.RecipeLevelTable.QualityDivider
-    public int CraftQualityModifier; // Recipe.RecipeLevelTable.QualityModifier
-    public int CraftQualityMax; // Recipe.RecipeLevelTable.Quality * Recipe.QualityFactor / 100
-    public int CraftQualityMin1; // min/first breakpoint
-    public int CraftQualityMin2;
-    public int CraftQualityMin3;
-    public double[] CraftConditionProbabilities = { }; // TODO: this assumes that new condition does not depend on prev - this is what my preliminary findings suggest (except for forced transitions)
-
-    public static double[] NormalCraftConditionProbabilities(int statLevel) => [1, statLevel >= 63 ? 0.25 : 0.2, 0.04];
-    public static double[] EWRelicT1CraftConditionProbabilities() => [1, 0.03, 0, 0, 0.12, 0.12, 0.12, 0, 0, 0.12];
-}
-
-public class StepState
-{
-    // initial state
-    public int Progress;
-    public int Quality;
-    public int Durability;
-    public int RemainingCP;
-    public CraftCondition Condition;
-    public int IQStacks;
-    public int WasteNotLeft;
-    public int ManipulationLeft;
-    public int GreatStridesLeft;
-    public int InnovationLeft;
-    public int VenerationLeft;
-    public int MuscleMemoryLeft;
-    public int FinalAppraisalLeft;
-    public int CarefulObservationLeft;
-    public bool HeartAndSoulActive;
-    public bool HeartAndSoulAvailable;
-    public CraftAction PrevComboAction;
-    public double ActionSuccessRoll;
-    public double NextStateRoll;
-    // outcome
-    public CraftAction Action;
-    public bool ActionSucceeded;
-}
 
 public enum CraftStatus
 {
@@ -69,58 +15,64 @@ public enum CraftStatus
     Count
 }
 
-public enum ActionResult
+public enum ForcedResult
 {
     Random,
     ForceSuccess,
     ForceFail
 }
 
+public enum ExecuteResult
+{
+    CantUse,
+    Failed,
+    Succeeded
+}
+
 public class Simulator
 {
     public CraftState Craft;
     public Random Rng;
-    public List<StepState> Steps = new();
 
     public Simulator(CraftState craft, int seed)
     {
         Craft = craft;
         Rng = new(seed);
-        Steps.Add(new() { Durability = craft.CraftDurability, RemainingCP = craft.StatCP, CarefulObservationLeft = craft.Specialist ? 3 : 0, HeartAndSoulAvailable = craft.Specialist, ActionSuccessRoll = Rng.NextDouble(), NextStateRoll = Rng.NextDouble() });
     }
 
-    public CraftStatus Status()
+    public StepState CreateInitial() => new() { Index = 1, Durability = Craft.CraftDurability, RemainingCP = Craft.StatCP, CarefulObservationLeft = Craft.Specialist ? 3 : 0, HeartAndSoulAvailable = Craft.Specialist, ActionSuccessRoll = Rng.NextDouble(), NextStateRoll = Rng.NextDouble() };
+
+    public CraftStatus Status(StepState step)
     {
-        var lastStep = Steps.Last();
-        return lastStep.Progress < Craft.CraftProgress
-            ? (lastStep.Durability > 0 ? CraftStatus.InProgress : CraftStatus.FailedDurability)
-            : (lastStep.Quality < Craft.CraftQualityMin1 ? CraftStatus.FailedMinQuality : lastStep.Quality < Craft.CraftQualityMin2 ? CraftStatus.SucceededQ1 : lastStep.Quality < Craft.CraftQualityMin3 ? CraftStatus.SucceededQ2 : CraftStatus.SucceededQ3);
+        return step.Progress < Craft.CraftProgress
+            ? (step.Durability > 0 ? CraftStatus.InProgress : CraftStatus.FailedDurability)
+            : (step.Quality < Craft.CraftQualityMin1 ? CraftStatus.FailedMinQuality : step.Quality < Craft.CraftQualityMin2 ? CraftStatus.SucceededQ1 : step.Quality < Craft.CraftQualityMin3 ? CraftStatus.SucceededQ2 : CraftStatus.SucceededQ3);
     }
 
-    public bool Execute(CraftAction action, ActionResult result = ActionResult.Random)
+    public (ExecuteResult, StepState) Execute(StepState step, CraftAction action, ForcedResult result = ForcedResult.Random)
     {
-        if (Status() != CraftStatus.InProgress)
-            return false; // can't execute action on craft that is not in progress
+        if (Status(step) != CraftStatus.InProgress)
+            return (ExecuteResult.CantUse, step); // can't execute action on craft that is not in progress
 
-        var last = Steps.Last();
         var success = result switch
         {
-            ActionResult.ForceSuccess => true,
-            ActionResult.ForceFail => false,
-            _ => last.ActionSuccessRoll < GetSuccessRate(last, action)
+            ForcedResult.ForceSuccess => true,
+            ForcedResult.ForceFail => false,
+            _ => step.ActionSuccessRoll < GetSuccessRate(step, action)
         };
 
         // TODO: check level requirements
-        if (!CanUseAction(last, action))
-            return false; // can't use action because of special conditions
+        if (!CanUseAction(step, action))
+            return (ExecuteResult.CantUse, step); // can't use action because of special conditions
 
         var next = new StepState();
-        next.Progress = last.Progress + (success ? CalculateProgress(last, action) : 0);
-        next.Quality = last.Quality + (success ? CalculateQuality(last, action) : 0);
-        next.IQStacks = last.IQStacks;
+        next.Index = SkipUpdates(action) ? step.Index : step.Index + 1;
+        next.Progress = step.Progress + (success ? CalculateProgress(step, action) : 0);
+        next.Quality = step.Quality + (success ? CalculateQuality(step, action) : 0);
+        next.IQStacks = step.IQStacks;
         if (success)
         {
-            if (next.Quality != last.Quality)
+            if (next.Quality != step.Quality)
                 ++next.IQStacks;
             if (action is CraftAction.PreciseTouch or CraftAction.PreparatoryTouch or CraftAction.Reflect)
                 ++next.IQStacks;
@@ -132,52 +84,49 @@ public class Simulator
 
         next.WasteNotLeft = action switch
         {
-            CraftAction.WasteNot => GetNewBuffDuration(last, 4),
-            CraftAction.WasteNot2 => GetNewBuffDuration(last, 8),
-            _ => GetOldBuffDuration(last.WasteNotLeft, action)
+            CraftAction.WasteNot => GetNewBuffDuration(step, 4),
+            CraftAction.WasteNot2 => GetNewBuffDuration(step, 8),
+            _ => GetOldBuffDuration(step.WasteNotLeft, action)
         };
-        next.ManipulationLeft = action == CraftAction.Manipulation ? GetNewBuffDuration(last, 8) : GetOldBuffDuration(last.ManipulationLeft, action);
-        next.GreatStridesLeft = action == CraftAction.GreatStrides ? GetNewBuffDuration(last, 3) : GetOldBuffDuration(last.GreatStridesLeft, action, next.Quality != last.Quality);
-        next.InnovationLeft = action == CraftAction.Innovation ? GetNewBuffDuration(last, 4) : GetOldBuffDuration(last.InnovationLeft, action);
-        next.VenerationLeft = action == CraftAction.Veneration ? GetNewBuffDuration(last, 4) : GetOldBuffDuration(last.VenerationLeft, action);
-        next.MuscleMemoryLeft = action == CraftAction.MuscleMemory ? GetNewBuffDuration(last, 5) : GetOldBuffDuration(last.MuscleMemoryLeft, action, next.Progress != last.Progress);
-        next.FinalAppraisalLeft = action == CraftAction.FinalAppraisal ? GetNewBuffDuration(last, 5) : GetOldBuffDuration(last.FinalAppraisalLeft, action, next.Progress >= Craft.CraftProgress);
-        next.CarefulObservationLeft = last.CarefulObservationLeft - (action == CraftAction.CarefulObservation ? 1 : 0);
-        next.HeartAndSoulActive = action == CraftAction.HeartAndSoul || last.HeartAndSoulActive && (last.Condition is CraftCondition.Good or CraftCondition.Excellent || !ConsumeHeartAndSoul(action));
-        next.HeartAndSoulAvailable = last.HeartAndSoulAvailable && action != CraftAction.HeartAndSoul;
+        next.ManipulationLeft = action == CraftAction.Manipulation ? GetNewBuffDuration(step, 8) : GetOldBuffDuration(step.ManipulationLeft, action);
+        next.GreatStridesLeft = action == CraftAction.GreatStrides ? GetNewBuffDuration(step, 3) : GetOldBuffDuration(step.GreatStridesLeft, action, next.Quality != step.Quality);
+        next.InnovationLeft = action == CraftAction.Innovation ? GetNewBuffDuration(step, 4) : GetOldBuffDuration(step.InnovationLeft, action);
+        next.VenerationLeft = action == CraftAction.Veneration ? GetNewBuffDuration(step, 4) : GetOldBuffDuration(step.VenerationLeft, action);
+        next.MuscleMemoryLeft = action == CraftAction.MuscleMemory ? GetNewBuffDuration(step, 5) : GetOldBuffDuration(step.MuscleMemoryLeft, action, next.Progress != step.Progress);
+        next.FinalAppraisalLeft = action == CraftAction.FinalAppraisal ? GetNewBuffDuration(step, 5) : GetOldBuffDuration(step.FinalAppraisalLeft, action, next.Progress >= Craft.CraftProgress);
+        next.CarefulObservationLeft = step.CarefulObservationLeft - (action == CraftAction.CarefulObservation ? 1 : 0);
+        next.HeartAndSoulActive = action == CraftAction.HeartAndSoul || step.HeartAndSoulActive && (step.Condition is CraftCondition.Good or CraftCondition.Excellent || !ConsumeHeartAndSoul(action));
+        next.HeartAndSoulAvailable = step.HeartAndSoulAvailable && action != CraftAction.HeartAndSoul;
         next.PrevComboAction = action; // note: even stuff like final appraisal and h&s break combos
 
-        if (last.FinalAppraisalLeft > 0 && next.Progress >= Craft.CraftProgress)
+        if (step.FinalAppraisalLeft > 0 && next.Progress >= Craft.CraftProgress)
             next.Progress = Craft.CraftProgress - 1;
         if (action == CraftAction.TrainedEye)
             next.Quality = Craft.CraftQualityMax;
 
-        next.RemainingCP = last.RemainingCP - GetCPCost(last, action);
+        next.RemainingCP = step.RemainingCP - GetCPCost(step, action);
         if (next.RemainingCP < 0)
-            return false; // can't use action because of insufficient cp
+            return (ExecuteResult.CantUse, step); // can't use action because of insufficient cp
         if (action == CraftAction.TricksOfTrade) // can't fail
             next.RemainingCP = Math.Min(Craft.StatCP, next.RemainingCP + 20);
 
         // assume these can't fail
-        next.Durability = last.Durability - GetDurabilityCost(last, action);
+        next.Durability = step.Durability - GetDurabilityCost(step, action);
         if (next.Durability > 0)
         {
             int repair = 0;
             if (action == CraftAction.MastersMend)
                 repair += 30;
-            if (last.ManipulationLeft > 0 && !SkipUpdates(action))
+            if (step.ManipulationLeft > 0 && !SkipUpdates(action))
                 repair += 5;
             next.Durability = Math.Min(Craft.CraftDurability, next.Durability + repair);
         }
 
-        next.Condition = action is CraftAction.FinalAppraisal or CraftAction.HeartAndSoul ? last.Condition : GetNextCondition(last);
+        next.Condition = action is CraftAction.FinalAppraisal or CraftAction.HeartAndSoul ? step.Condition : GetNextCondition(step);
         next.ActionSuccessRoll = Rng.NextDouble();
         next.NextStateRoll = Rng.NextDouble();
 
-        last.Action = action;
-        last.ActionSucceeded = success;
-        Steps.Add(next);
-        return true;
+        return (success ? ExecuteResult.Succeeded : ExecuteResult.Failed, next);
     }
 
     public int BaseProgress()
@@ -200,10 +149,10 @@ public class Simulator
     {
         CraftAction.IntensiveSynthesis or CraftAction.PreciseTouch or CraftAction.TricksOfTrade => step.Condition is CraftCondition.Good or CraftCondition.Excellent || step.HeartAndSoulActive,
         CraftAction.PrudentSynthesis or CraftAction.PrudentTouch => step.WasteNotLeft == 0,
-        CraftAction.MuscleMemory or CraftAction.Reflect => step == Steps.First(),
+        CraftAction.MuscleMemory or CraftAction.Reflect => step.Index == 1,
         CraftAction.TrainedFinnesse => step.IQStacks == 10,
         CraftAction.ByregotBlessing => step.IQStacks > 0,
-        CraftAction.TrainedEye => !Craft.CraftExpert && Craft.StatLevel >= Craft.CraftLevel + 10 && step == Steps.First(),
+        CraftAction.TrainedEye => !Craft.CraftExpert && Craft.StatLevel >= Craft.CraftLevel + 10 && step.Index == 1,
         CraftAction.CarefulObservation => step.CarefulObservationLeft > 0,
         CraftAction.HeartAndSoul => step.HeartAndSoulAvailable,
         _ => true

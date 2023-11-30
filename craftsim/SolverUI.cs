@@ -1,5 +1,6 @@
 ﻿using ImGuiNET;
 using System;
+using System.Linq;
 
 namespace craftsim;
 
@@ -11,6 +12,7 @@ public class SolverUI
     // last run stats
     private int _numExperiments;
     private int[] _numOutcomes = new int[(int)CraftStatus.Count];
+    private float _averagePliantCost = float.NaN;
 
     public SolverUI(CraftState craft)
     {
@@ -36,6 +38,10 @@ public class SolverUI
             DrawNumber("Success Q3", _numOutcomes[5]);
             ImGui.TextUnformatted($"Average yield: {(double)(_numOutcomes[3] + 2 * _numOutcomes[4] + 3 * _numOutcomes[5]) / _numExperiments:f3}");
         }
+
+        ImGui.Separator();
+        if (ImGui.Button(!float.IsNaN(_averagePliantCost) ? $"Average pliant cost: {_averagePliantCost:f3}" : "Calculate average pliant cost"))
+            RunPliantCalc();
     }
 
     private void DrawNumber(string prompt, int count) => ImGui.TextUnformatted($"{prompt}: {count} ({count * 100.0 / _numExperiments:f2}%)");
@@ -47,9 +53,34 @@ public class SolverUI
         for (int i = 0; i < _newExperimentCount; ++i)
         {
             var sim = new Simulator(_craft, rng.Next());
-            _solver.Solve(sim);
-            ++_numOutcomes[(int)sim.Status()];
+            var res = _solver.Solve(sim, sim.CreateInitial());
+            ++_numOutcomes[(int)sim.Status(res)];
         }
         _numExperiments = _newExperimentCount;
+    }
+
+    private void RunPliantCalc()
+    {
+        _averagePliantCost = 0;
+        var rng = new Random();
+        for (int i = 0; i < _newExperimentCount; ++i)
+        {
+            var sim = new Simulator(_craft, rng.Next());
+            var (_, step) = sim.Execute(sim.CreateInitial(), CraftAction.Observe); // start from random condition
+            while (step.Condition != CraftCondition.Pliant)
+            {
+                if (step.Condition == CraftCondition.Good)
+                {
+                    _averagePliantCost -= 20;
+                    (_, step) = sim.Execute(step, CraftAction.TricksOfTrade);
+                }
+                else
+                {
+                    _averagePliantCost += sim.GetCPCost(step, CraftAction.Observe);
+                    (_, step) = sim.Execute(step, CraftAction.Observe);
+                }
+            }
+        }
+        _averagePliantCost /= _newExperimentCount;
     }
 }

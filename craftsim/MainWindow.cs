@@ -6,13 +6,17 @@ namespace craftsim;
 
 public unsafe class MainWindow : Window, IDisposable
 {
-    private TransitionDB _trans = new();
+    private GameCraftState _gameState = new();
+    private TransitionDB _trans;
     private SimulatorUI _sim;
     private SolverUI _solver;
-    private RecommendationUI _recommendations = new();
+    private RecommendationUI _recommendations;
 
     public MainWindow() : base("CraftSim")
     {
+        _trans = new(_gameState);
+        _recommendations = new(_gameState);
+
         // TODO: customization...
         bool hqJhinga = true;
         bool hqCPDraught = true;
@@ -46,13 +50,14 @@ public unsafe class MainWindow : Window, IDisposable
 
     public void Dispose()
     {
-        _recommendations.Dispose();
+        _gameState.Dispose();
     }
 
     public override void Draw()
     {
         try
         {
+            _gameState.Update();
             _trans.Update();
 
             using var tabs = ImRaii.TabBar("Tabs");
@@ -74,7 +79,9 @@ public unsafe class MainWindow : Window, IDisposable
         }
         catch (Exception ex)
         {
-            Service.Log.Error($"Error: {ex.Message}");
+            Service.Log.Error($"Error: {ex}");
         }
     }
+
+    public void UseRecommendedAction() => _gameState.UseAction(_recommendations.Recommendation);
 }

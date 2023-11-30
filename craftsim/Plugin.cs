@@ -30,7 +30,7 @@ public sealed class Plugin : IDalamudPlugin
         Dalamud.UiBuilder.Draw += WindowSystem.Draw;
         Dalamud.UiBuilder.OpenConfigUi += () => _wndMain.IsOpen = true;
 
-        _commandManager.AddHandler("/csim", new CommandInfo((_, _) => _wndMain.IsOpen = true));
+        _commandManager.AddHandler("/csim", new CommandInfo(OnCommand));
     }
 
     public void Dispose()
@@ -38,5 +38,18 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.RemoveAllWindows();
         _commandManager.RemoveHandler("/csim");
         _wndMain.Dispose();
+    }
+
+    private void OnCommand(string cmd, string args)
+    {
+        switch (args.ToLowerInvariant())
+        {
+            case "nextaction":
+                _wndMain.UseRecommendedAction();
+                break;
+            default:
+                _wndMain.IsOpen = true;
+                break;
+        }
     }
 }
