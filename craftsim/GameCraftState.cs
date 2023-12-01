@@ -122,14 +122,21 @@ public unsafe class GameCraftState : IDisposable
             CurState.CraftQualityMax = (int)(lt?.Quality * CurRecipe?.QualityFactor / 100 ?? 0); // atkvalue[17]
             if (addon->AtkUnitBase.AtkValues[22].UInt != 0)
             {
+                // three quality levels
                 CurState.CraftQualityMin1 = addon->AtkUnitBase.AtkValues[22].Int * 10;
                 CurState.CraftQualityMin2 = addon->AtkUnitBase.AtkValues[23].Int * 10;
                 CurState.CraftQualityMin3 = addon->AtkUnitBase.AtkValues[24].Int * 10;
             }
+            else if (addon->AtkUnitBase.AtkValues[18].Int != 0)
+            {
+                // min quality => assume no point in having more
+                CurState.CraftQualityMin1 = CurState.CraftQualityMin2 = CurState.CraftQualityMin3 = addon->AtkUnitBase.AtkValues[18].Int;
+            }
             else
             {
-                CurState.CraftQualityMin1 = CurState.CraftQualityMin2 = addon->AtkUnitBase.AtkValues[18].Int;
-                CurState.CraftQualityMin3 = CurState.CraftQualityMax;
+                // normal craft
+                CurState.CraftQualityMin1 = 0;
+                CurState.CraftQualityMin2 = CurState.CraftQualityMin3 = CurState.CraftQualityMax;
             }
         }
 

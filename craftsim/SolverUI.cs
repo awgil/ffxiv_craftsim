@@ -14,6 +14,9 @@ public class SolverUI
     private int[] _numOutcomes = new int[(int)CraftStatus.Count];
     private float _averagePliantCost = float.NaN;
 
+    private static int[] _weightsRelic = [0, 0, 0, 1, 2, 3];
+    private static int[] _weightsNormal = [0, 0, 0, 1, 1, 1];
+
     public SolverUI(CraftState craft)
     {
         _craft = craft;
@@ -36,7 +39,9 @@ public class SolverUI
             DrawNumber("Success Q1", _numOutcomes[3]);
             DrawNumber("Success Q2", _numOutcomes[4]);
             DrawNumber("Success Q3", _numOutcomes[5]);
-            ImGui.TextUnformatted($"Average yield: {(double)(_numOutcomes[3] + 2 * _numOutcomes[4] + 3 * _numOutcomes[5]) / _numExperiments:f3}");
+            var weights = _craft.CraftQualityMin1 < _craft.CraftQualityMin2 && _craft.CraftQualityMin2 < _craft.CraftQualityMin3 ? _weightsRelic : _weightsNormal;
+            var yield = weights.Zip(_numOutcomes).Sum(wq => wq.First * wq.Second);
+            ImGui.TextUnformatted($"Average yield: {(double)yield / _numExperiments:f3}");
         }
 
         ImGui.Separator();

@@ -131,7 +131,7 @@ public class Solver
 
         // TODO: consider that we might want to use some touch actions after byregot's, if we have spare cp/durability...
         // TODO: if we're extremely low on CP, consider doing some careful observations to fish for tricks?
-        if (step.IQStacks == 0 && step.Quality > 0 || step.Quality >= sim.Craft.CraftQualityMin3 || step.Quality >= sim.Craft.CraftQualityMin1 && step.RemainingCP < 24 + reservedCPForProgress)
+        if (/*step.IQStacks == 0 && step.Quality > 0 ||*/ step.Quality >= sim.Craft.CraftQualityMin3 || step.Quality >= sim.Craft.CraftQualityMin1 && step.RemainingCP < 24 + reservedCPForProgress)
             return SolveFinishProgress(sim, step, progressDeficit); // we've used byregot's, or we're at max quality anyway, or we can't byregot anymore - just finish the craft now
 
         if (step.VenerationLeft > 0 && progressDeficit > 0)
