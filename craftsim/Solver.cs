@@ -3,32 +3,53 @@ using System.Linq;
 
 namespace craftsim;
 
-// some rough estimations:
-// - 10 dur == 24cp (because manipulation restores 40dur for 96cp)
-// - good == 20cp (tricks)
-// useful synth actions:
-// - basic synth is 120p for 24cp = 5.00 p/cp - this is a baseline
-// - careful synth is 180p for 7+24cp = 5.81 p/cp - this is a good action to finish the craft
-// - prudent synth is 180p for 18+12cp = 6.00 p/cp - alternative way to finish the craft, with different cp/durability cost spread
-// - rapid synth is 500p for 24cp with 50% success (75% under centered) = 10.42 p/cp (15.63 p/cp under centered) - very efficient, but a gamble
-// - intensive synth is 400p for 6+24cp = 13.3 p/cp (8 p/cp if we assume good is worth 20cp) - very efficient, good alternative to rapid if gamble is undesirable, uses up good condition
-// not so useful synth actions:
-// - observe->focused synth is 200p for 7+5+24cp = 5.55 p/cp - somewhat worse than careful and harder to use (though might have some value for finishing the craft?)
-// - groundwork is 360p for 18+48cp = 5.45 p/cp - very expensive durability wise, but potentially good for veneration/waste-not utilization?
-// useless synth actions:
-// - focused synth without observe is strictly worse than rapid (same gamble, but more cost for less potency)
-// veneration estimation:
-// - costs 18cp, 4 steps duration => single step costs ~4.5cp
-// - basic synth is 60p/charge = 13.33 p/cp
-// - careful/prudent synth is 90p/charge = 20.00 p/cp
-// - rapid synth is 250p/charge = 27.78 p/cp (41.67 p/cp under centered)
-// - intensive synth is 200p/charge = 44.44 p/cp
+// some thoughts:
+// - any time we want to regain some dura, we can bait pliant and use manip
+// - assuming 12% pliant, 3% good, 12% good omen, average cost to get pliant from random starting point is ~24cp
+// - this means that estimated manip cost is 24+48 = 72, meaning 10dura is worth ~18cp
+// - if we were to use full cost manip as a rule, it would be worth ~24cp instead - but we should rarely be doing that
+// - if we start in some non-interesting state, we would need to pay ~31cp to get pliant (because we pay 7cp to start from 'random' state)
+// repair actions:
+// - if we get random pliant and manip is not active, using manip is effectively winning 24cp (because we don't need to bait), which is the baseline worth of pliant
+// - using pliant mm is getting 30dura = 54cp for 44cp, meaning it's effective 10cp win
+// - using pliant manip to clip 1 stack is getting 35dura = 63cp for 48cp, meaning it's effective 15cp win, making it better than mm
+// - using pliant manip to clip 2 stacks is getting 30dura = 54cp for 48cp, meaning is's 8cp win compared to 10cp mm - which makes sense, as it's a strict loss
+// assuming 60dura craft, the real dura sweet spot is exactly 25dura
+// - any more and we can't use manip+mm on double pliant
+// - any less and we might be forced to use observe and waste conditions
+// - so general flow is - exploit buffs (mume/vene/inno), outside buffs get manip and get to sweet spot before starting next phase, exploit random procs for iq/progress if while waiting
+// synth action comparison
+// - basic synth is 120p for 18cp = 6.67p/cp - baseline to finish the craft
+// - careful synth is 180p for 7+18cp = 7.2p/cp - slightly more efficient way to finish the craft
+// - prudent synth is 180p for 18+9cp = 6.67p/cp -  alternative way to finish the craft, with different cp/durability cost spread
+// - observe+focused synth is 200p for 7+5+18cp = 6.67p/cp - TODO consider, might be a good way to exploit malleable?.. good all around, too bad we have better actions
+// - groundwork is 360p for 18+36cp = 6.67p/cp - very expensive durability wise, TODO consider for veneration/waste-not utilization?
+// - rapid synth is 500p for 18cp with 50% success (75% under centered) = 13.89p/cp (20.83p/cp under centered) - this is extremely efficient and thus is our baseline
+// - intensive synth is 400p for 6+18cp = 16.67p/cp (9.09p/cp if we assume good is worth 20cp) - very efficient, good alternative to rapid if gamble is undesired, uses up good condition
+// touch action comparison
+// - basic touch combo is 1iq + 100/125/150p for 18+18cp = 2.78/3.47/4.17p/cp - too restrictive for reacting to procs, too inefficient if broken, maybe useful under waste-not?..
+// - hasty touch is 100p for 1iq + 18cp with 60% success (85% under centered) = 3.33p/cp (4.72p/cp under centered) - decent way to exploit centered/sturdy for iq
+// - observe+focused touch is 1iq + 150p for 7+18+18cp = 3.49p/cp - this is a baseline for finisher phase, very good opportunity to react for procs
+// - prep touch is 2iq + 200p for 40+36cp = 2.63p/cp - very expensive and not very efficient, but still the best quality action, so decent to exploit good/sturdy for quality if under gs+inno
+// - precise touch is 2iq + 150p for 18+18cp = 4.17p/cp (2.67p/cp if we assume good is worth 20cp) - very efficient way of getting iq, and decent way to exploit good for quality under gs/inno
+// - prudent touch is 1iq + 100p for 25+9cp = 2.94p/cp - very efficient way of getting iq, and a reasonable alternative for finisher when low on dura
+// - finnesse is 100p for 32cp = 3.13p/cp - even better alternative for finisher when low on dura, quite expensive cp wise though
+// general flow
+// - if starting with mume, use buff for rapid/intensive, and potentially use vene for some more free progress
+// -- one concern here is using too much dura here and being forced to bait for pliant and waste good conditions
+// - after mume (or from start, if not using it), aim for progress and iq
+// -- if low on dura, observe on useless conditions to preserve dura and bait pliant
+// -- if high on dura and need more progress, consider vene + rapid spam
+// - after reaching 10iq, focus on quality instead - use gs/inno combos
+// -- consider what to do with progress: either force finish before starting quality (wastes good opportunities like centered later between combos) or just start quality combos immediately (harder to estimate needed cp to finish the craft)
+// - after reaching quality cap, just get progress
 public class Solver
 {
     public bool UseReflectOpener;
     public bool MuMeRequireVeneration; // if true, we use veneration immediately after mume, disregarding any conditions (except maybe pliant for manip)
     public bool MuMeAllowIntensive = true; // if true, we allow spending mume on intensive (400p) rather than rapid (500p) if good condition procs
     public bool MuMeIntensiveLastResort = true; // if true and we're on last step of mume, use intensive (forcing via H&S if needed) rather than hoping for rapid (unless we have centered)
+    public bool MuMeSkipNormal = false; // if true, observe rather than use actions during unfavourable conditions to conserve durability
     public int MuMeMinStepsForManip = 2; // if this or less rounds are remaining on mume, don't use manipulation under favourable conditions
     public int MuMeMinStepsForVene = 1; // if this or less rounds are remaining on mume, don't use veneration
     public int MidMaxPliantManipClip = 1; // max number of manipulation stacks we can tolerate losing by reapplying manip on pliant
@@ -49,6 +70,7 @@ public class Solver
         ImGui.Checkbox("MuMe: use veneration asap, disregarding most conditions", ref MuMeRequireVeneration);
         ImGui.Checkbox("MuMe: allow spending mume on intensive (400p) rather than rapid (500p) if good condition procs", ref MuMeAllowIntensive);
         ImGui.Checkbox("MuMe: if at last step of mume and not centered, use intensive (forcing via H&S if necessary)", ref MuMeIntensiveLastResort);
+        ImGui.Checkbox("MuMe: observe during unfavourable conditions instead of spending dura on normal rapids", ref MuMeSkipNormal);
         ImGui.SliderInt("MuMe: allow manipulation only if more than this amount of steps remain on mume", ref MuMeMinStepsForManip, 0, 5);
         ImGui.SliderInt("MuMe: allow veneration only if more than this amount of steps remain on mume", ref MuMeMinStepsForVene, 0, 5);
         ImGui.SliderInt("Mid: max steps we allow clipping by reapplying manip on pliant", ref MidMaxPliantManipClip, 0, 8);
@@ -138,16 +160,17 @@ public class Solver
             return CraftAction.Manipulation;
         if (MuMeRequireVeneration && step.VenerationLeft == 0)
             return CraftAction.Veneration;
-        if (step.Condition == CraftCondition.Centered)
-            return CraftAction.RapidSynthesis; // centered => rapid, very good value
+        if (step.Condition is CraftCondition.Centered or CraftCondition.Sturdy)
+            return CraftAction.RapidSynthesis; // centered/sturdy => rapid, very good value
         var canUseIntensive = sim.CanUseAction(step, CraftAction.IntensiveSynthesis);
         if (canUseIntensive && MuMeAllowIntensive)
             return CraftAction.IntensiveSynthesis; // good and we are allowed to spend charge on intensive
-        // TODO: sturdy - veneration vs action
         if (step.VenerationLeft == 0 && step.MuscleMemoryLeft > MuMeMinStepsForVene)
-            return CraftAction.Veneration; // other conditions - use veneration (TODO: reconsider sturdy)
+            return CraftAction.Veneration; // other conditions - use veneration
         if (MuMeIntensiveLastResort && step.MuscleMemoryLeft == 1)
             return canUseIntensive ? CraftAction.IntensiveSynthesis : step.HeartAndSoulAvailable ? CraftAction.HeartAndSoul : CraftAction.RapidSynthesis; // last chance
+        if (MuMeSkipNormal && step.MuscleMemoryLeft > 1 && step.Durability < sim.Craft.CraftDurability)
+            return CraftAction.Observe; // conserve durability rather than gamble away
         return CraftAction.RapidSynthesis; // try rapid, we can try again if it fails
     }
 

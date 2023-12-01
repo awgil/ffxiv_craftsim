@@ -60,6 +60,9 @@ public class SimulatorUI
         ImGui.SameLine();
         ImGui.TextUnformatted($"Suggestion: {_solver.SolveNextStep(_sim, _steps.Last().state)}");
 
+        if (ImGui.CollapsingHeader("Solver strategy"))
+            _solver.Draw();
+
         var status = _sim.Status(_steps.Last().state);
         ImGui.TextUnformatted($"{status}; base progress = {_sim.BaseProgress()}, base quality = {_sim.BaseQuality()}");
         if (status == CraftStatus.InProgress && ImGui.CollapsingHeader("Manual actions"))
