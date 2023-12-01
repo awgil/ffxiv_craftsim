@@ -135,22 +135,18 @@ public class Solver
             return SolveFinishProgress(sim, step, progressDeficit); // we've used byregot's, or we're at max quality anyway, or we can't byregot anymore - just finish the craft now
 
         if (step.VenerationLeft > 0 && progressDeficit > 0)
-            return UseIfEnoughCP(sim, step, SolveMidProgress(sim, step, progressDeficit)); // we still have veneration running and need more progress, focus on that...
+            return UseIfEnoughCP(sim, step, progressDeficit, SolveMidProgress(sim, step, progressDeficit)); // we still have veneration running and need more progress, focus on that...
 
         if (step.IQStacks < 10)
-            return UseIfEnoughCP(sim, step, SolveMidIQ(sim, step, progressDeficit)); // we need more iq (and maybe some progress too)
+            return UseIfEnoughCP(sim, step, progressDeficit, SolveMidIQ(sim, step, progressDeficit)); // we need more iq (and maybe some progress too)
 
         // okay, we're at 10 iq stacks here, finisher time
         if (progressDeficit > 0)
-            return UseIfEnoughCP(sim, step, SolveMidProgress(sim, step, progressDeficit)); // we still need progress, handle that before starting finisher
+            return UseIfEnoughCP(sim, step, progressDeficit, SolveMidProgress(sim, step, progressDeficit)); // we still need progress, handle that before starting finisher
 
         // do the finisher
         var freeCP = step.RemainingCP - reservedCPForProgress - 24;
-        var finishAction = SolveFinishQuality(sim, step, freeCP);
-        if (step.RemainingCP >= sim.GetCPCost(step, finishAction))
-            return finishAction;
-        // we just don't have enough cp for a finisher, bail
-        return SolveFinishProgress(sim, step, progressDeficit);
+        return UseIfEnoughCP(sim, step, progressDeficit, SolveFinishQuality(sim, step, freeCP));
     }
 
     private CraftAction SolveOpenerMuMe(Simulator sim, StepState step)
@@ -574,7 +570,7 @@ public class Solver
     }
 
     // if not enough cp, it's an emergency (e.g. out of cp mid craft due to really shit luck), try tricks or just bail...
-    public CraftAction UseIfEnoughCP(Simulator sim, StepState step, CraftAction action)
+    public CraftAction UseIfEnoughCP(Simulator sim, StepState step, int progressDeficit, CraftAction action)
     {
         if (step.RemainingCP >= sim.GetCPCost(step, action))
             return action;
@@ -582,6 +578,6 @@ public class Solver
         if (emergencyAction != CraftAction.None)
             return emergencyAction;
         // no idea...
-        return CraftAction.BasicSynthesis;
+        return SolveFinishProgress(sim, step, progressDeficit);
     }
 }
