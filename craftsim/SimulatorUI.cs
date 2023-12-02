@@ -42,7 +42,7 @@ public class SimulatorUI
                 Restart(_rng.Next());
                 SolveRest();
             }
-            while (_sim!.Status(_steps.Last().state) is not CraftStatus.InProgress/* and not CraftStatus.FailedDurability*/);
+            while (_sim!.Status(_steps.Last().state) is CraftStatus.SucceededQ3/* and not CraftStatus.FailedDurability*/);
         }
         ImGui.SameLine();
         if (ImGui.Button($"Restart with seed:"))
@@ -64,8 +64,7 @@ public class SimulatorUI
             _solver.Draw();
 
         var status = _sim.Status(_steps.Last().state);
-        ImGui.TextUnformatted($"{status}; base progress = {_sim.BaseProgress()}, base quality = {_sim.BaseQuality()}");
-        if (status == CraftStatus.InProgress && ImGui.CollapsingHeader("Manual actions"))
+        if (ImGui.CollapsingHeader($"{status}; base progress = {_sim.BaseProgress()}, base quality = {_sim.BaseQuality()}###manual") && status == CraftStatus.InProgress)
         {
             int cntr = 0;
             var curStep = _steps.Last().state;
@@ -79,8 +78,13 @@ public class SimulatorUI
                 using var dis = ImRaii.Disabled(!_sim.CanUseAction(curStep, opt) || curStep.RemainingCP < _sim.GetCPCost(curStep, opt));
                 if (ImGui.Button($"{opt} ({_sim.GetCPCost(curStep, opt)}cp, {_sim.GetDurabilityCost(curStep, opt)}dur)"))
                 {
-                    _sim.Execute(curStep, opt, _forcedResult);
-                    _forcedResult = ForcedResult.Random;
+                    var (res, next) = _sim.Execute(curStep, opt, _forcedResult);
+                    if (res != ExecuteResult.CantUse)
+                    {
+                        _steps[_steps.Count - 1] = (curStep, opt, res == ExecuteResult.Succeeded);
+                        _steps.Add((next, CraftAction.None, false));
+                        _forcedResult = ForcedResult.Random;
+                    }
                 }
             }
 
@@ -113,8 +117,13 @@ public class SimulatorUI
             }
         }
 
+        int i = 0;
+        int restartAt = -1;
         foreach (var step in _steps)
         {
+            if (ImGui.Button($">##{i}"))
+                restartAt = i;
+            ImGui.SameLine();
             DrawProgress(step.state.Progress, _craft.CraftProgress);
             ImGui.SameLine();
             DrawProgress(step.state.Quality, _craft.CraftQualityMax);
@@ -137,6 +146,15 @@ public class SimulatorUI
             if (step.action != CraftAction.None)
                 sb.Append($"; used {step.action}{(step.success ? "" : " (fail)")}");
             ImGui.TextUnformatted(sb.ToString());
+
+            ++i;
+        }
+
+        if (restartAt >= 0)
+        {
+            Restart(_seed);
+            while (_steps.Count <= restartAt)
+                SolveNext();
         }
     }
 
