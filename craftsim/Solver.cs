@@ -13,6 +13,7 @@ namespace craftsim;
 // - using pliant mm is getting 30dura = 54cp for 44cp, meaning it's effective 10cp win
 // - using pliant manip to clip 1 stack is getting 35dura = 63cp for 48cp, meaning it's effective 15cp win, making it better than mm
 // - using pliant manip to clip 2 stacks is getting 30dura = 54cp for 48cp, meaning is's 8cp win compared to 10cp mm - which makes sense, as it's a strict loss
+// - primed manip is free 10dura = 18cp for full cost, meaning it's ~30cp more expensive than pliant; observing would be ~31cp, meaning generally pliant is an ok alternative
 // assuming 60dura craft, the real dura sweet spot is exactly 25dura
 // - any more and we can't use manip+mm on double pliant
 // - any less and we might be forced to use observe and waste conditions
@@ -45,9 +46,10 @@ namespace craftsim;
 public class Solver
 {
     public bool UseReflectOpener;
-    public bool MuMeRequireVeneration; // if true, we use veneration immediately after mume, disregarding any conditions (except maybe pliant for manip)
-    public bool MuMeAllowIntensive = true; // if true, we allow spending mume on intensive (400p) rather than rapid (500p) if good condition procs
+    public bool MuMeIntensiveGood = true; // if true, we allow spending mume on intensive (400p) rather than rapid (500p) if good condition procs
+    public bool MuMeIntensiveMalleable = false; // if true and we have malleable during mume, use intensive rather than hoping for rapid
     public bool MuMeIntensiveLastResort = true; // if true and we're on last step of mume, use intensive (forcing via H&S if needed) rather than hoping for rapid (unless we have centered)
+    public bool MuMePrimedManip = false; // if true, allow using primed manipulation after veneration is up on mume
     public bool MuMeAllowObserve = false; // if true, observe rather than use actions during unfavourable conditions to conserve durability
     public int MuMeMinStepsForManip = 2; // if this or less rounds are remaining on mume, don't use manipulation under favourable conditions
     public int MuMeMinStepsForVene = 1; // if this or less rounds are remaining on mume, don't use veneration
@@ -56,6 +58,8 @@ public class Solver
     public int MidMinIQForHSPrecise = 10; // min iq stacks where we use h&s+precise; 10 to disable
     public bool MidBaitPliantWithObservePreQuality = true; // if true, when very low on durability and without manip active during pre-quality phase, we use observe rather than normal manip
     public bool MidBaitPliantWithObserveAfterIQ = true; // if true, when very low on durability and without manip active after iq is stacked, we use observe rather than normal manip or inno+finnesse
+    public bool MuMePrimedManipPreQuality = true; // if true, allow using primed manipulation during pre-quality phase
+    public bool MuMePrimedManipAfterIQ = true; // if true, allow using primed manipulation during after iq is stacked
     public bool MidKeepHighDuraUnbuffed = true; // if true, observe rather than use actions during unfavourable conditions to conserve durability when no buffs are active
     public bool MidKeepHighDuraVeneration = false; // if true, observe rather than use actions during unfavourable conditions to conserve durability when veneration is active
     public bool MidAllowVenerationGoodOmen = true; // if true, we allow using veneration during iq phase if we lack a lot of progress on good omen
@@ -77,9 +81,10 @@ public class Solver
     public void Draw()
     {
         ImGui.Checkbox("Use Reflect instead of MuMe in opener", ref UseReflectOpener);
-        ImGui.Checkbox("MuMe: use veneration asap, disregarding most conditions", ref MuMeRequireVeneration);
-        ImGui.Checkbox("MuMe: allow spending mume on intensive (400p) rather than rapid (500p) if good condition procs", ref MuMeAllowIntensive);
+        ImGui.Checkbox("MuMe: allow spending mume on intensive (400p) rather than rapid (500p) if good condition procs", ref MuMeIntensiveGood);
+        ImGui.Checkbox("MuMe: if malleable during mume, use H&S + intensive", ref MuMeIntensiveMalleable);
         ImGui.Checkbox("MuMe: if at last step of mume and not centered, use intensive (forcing via H&S if necessary)", ref MuMeIntensiveLastResort);
+        ImGui.Checkbox("MuMe: use primed manipulation, if veneration is already active", ref MuMePrimedManip);
         ImGui.Checkbox("MuMe: observe during unfavourable conditions instead of spending dura on normal rapids", ref MuMeAllowObserve);
         ImGui.SliderInt("MuMe: allow manipulation only if more than this amount of steps remain on mume", ref MuMeMinStepsForManip, 0, 5);
         ImGui.SliderInt("MuMe: allow veneration only if more than this amount of steps remain on mume", ref MuMeMinStepsForVene, 0, 5);
@@ -88,6 +93,8 @@ public class Solver
         ImGui.SliderInt("Mid: min iq stacks to spend h&s on precise (10 to disable)", ref MidMinIQForHSPrecise, 0, 10);
         ImGui.Checkbox("Mid: on low dura, prefer observe to non-pliant manip before iq is stacked", ref MidBaitPliantWithObservePreQuality);
         ImGui.Checkbox("Mid: on low dura, prefer observe to non-pliant manip / inno+finesse after iq is stacked", ref MidBaitPliantWithObserveAfterIQ);
+        ImGui.Checkbox("Mid: use manipulation on primed before iq is stacked", ref MuMePrimedManipPreQuality);
+        ImGui.Checkbox("Mid: use manipulation on primed after iq is stacked, if enough cp is available to utilize durability well", ref MuMePrimedManipAfterIQ);
         ImGui.Checkbox("Mid: allow observes during unfavourable conditions without buffs", ref MidKeepHighDuraUnbuffed);
         ImGui.Checkbox("Mid: allow observes during unfavourable conditions under veneration", ref MidKeepHighDuraVeneration);
         ImGui.Checkbox("Mid: allow veneration if we still have large progress deficit (> intensive) on good omen", ref MidAllowVenerationGoodOmen);
@@ -118,7 +125,6 @@ public class Solver
         }
     }
 
-    // TODO: malleable/primed states
     public CraftAction SolveNextStep(Simulator sim, StepState step)
     {
         if (step.Index == 1)
@@ -167,23 +173,53 @@ public class Solver
     private CraftAction SolveOpenerMuMe(Simulator sim, StepState step)
     {
         // we don't really have any concerns about cp or durability during mume - we might end up with quite low final durability though...
-        if (step.Condition == CraftCondition.Pliant && step.MuscleMemoryLeft > MuMeMinStepsForManip && step.ManipulationLeft == 0)
-            return CraftAction.Manipulation;
-        if (MuMeRequireVeneration && step.VenerationLeft == 0)
+        if (step.Condition == CraftCondition.Pliant)
+        {
+            // pliant is manip > vene > ignore
+            if (step.MuscleMemoryLeft > MuMeMinStepsForManip && step.ManipulationLeft == 0)
+                return CraftAction.Manipulation;
+            if (step.MuscleMemoryLeft > MuMeMinStepsForVene && step.VenerationLeft == 0)
+                return CraftAction.Veneration;
+        }
+        else if (step.Condition == CraftCondition.Primed && MuMePrimedManip)
+        {
+            // primed is vene > manip > ignore
+            if (step.MuscleMemoryLeft > MuMeMinStepsForVene && step.VenerationLeft == 0)
+                return CraftAction.Veneration;
+            if (step.MuscleMemoryLeft > MuMeMinStepsForManip && step.ManipulationLeft == 0)
+                return CraftAction.Manipulation;
+        }
+        else if (step.Condition == CraftCondition.Centered)
+        {
+            // centered rapid is very good value, even disregarding last-chance or veneration concerns
+            return CraftAction.RapidSynthesis;
+        }
+        else if (step.Condition == CraftCondition.Sturdy)
+        {
+            // last-chance intensive or rapid, regardless of veneration
+            return SolveOpenerMuMeTouch(sim, step, MuMeIntensiveLastResort && step.MuscleMemoryLeft == 1);
+        }
+        else if (step.Condition == CraftCondition.Malleable)
+        {
+            // last-chance/preferred intensive or rapid, regardless of veneration
+            return SolveOpenerMuMeTouch(sim, step, MuMeIntensiveMalleable || MuMeIntensiveLastResort && step.MuscleMemoryLeft == 1);
+        }
+        else if (step.Condition == CraftCondition.Good && MuMeIntensiveGood)
+        {
+            // good and we want to spend on intensive
+            return CraftAction.IntensiveSynthesis;
+        }
+
+        // ok we have a normal/ignored condition
+        if (step.MuscleMemoryLeft > MuMeMinStepsForVene && step.VenerationLeft == 0)
             return CraftAction.Veneration;
-        if (step.Condition is CraftCondition.Centered or CraftCondition.Sturdy)
-            return CraftAction.RapidSynthesis; // centered/sturdy => rapid, very good value
-        var canUseIntensive = sim.CanUseAction(step, CraftAction.IntensiveSynthesis);
-        if (canUseIntensive && MuMeAllowIntensive)
-            return CraftAction.IntensiveSynthesis; // good and we are allowed to spend charge on intensive
-        if (step.VenerationLeft == 0 && step.MuscleMemoryLeft > MuMeMinStepsForVene)
-            return CraftAction.Veneration; // other conditions - use veneration
-        if (MuMeIntensiveLastResort && step.MuscleMemoryLeft == 1)
-            return canUseIntensive ? CraftAction.IntensiveSynthesis : step.HeartAndSoulAvailable ? CraftAction.HeartAndSoul : CraftAction.RapidSynthesis; // last chance
         if (MuMeAllowObserve && step.MuscleMemoryLeft > 1 && step.Durability < sim.Craft.CraftDurability)
             return CraftAction.Observe; // conserve durability rather than gamble away
-        return CraftAction.RapidSynthesis; // try rapid, we can try again if it fails
+        return SolveOpenerMuMeTouch(sim, step, MuMeIntensiveLastResort && step.MuscleMemoryLeft == 1);
     }
+
+    private CraftAction SolveOpenerMuMeTouch(Simulator sim, StepState step, bool intensive)
+        => !intensive ? CraftAction.RapidSynthesis : sim.CanUseAction(step, CraftAction.IntensiveSynthesis) ? CraftAction.IntensiveSynthesis : step.HeartAndSoulAvailable ? CraftAction.HeartAndSoul : CraftAction.RapidSynthesis;
 
     private CraftAction SolveMid(Simulator sim, StepState step, int progressDeficit, int availableCP)
     {
@@ -221,7 +257,7 @@ public class Solver
             return duraAction;
 
         // dura is fine - see what else can we do
-        if (step.Condition == CraftCondition.GoodOmen && MidAllowVenerationGoodOmen && progressDeficit > sim.CalculateProgress(step, CraftAction.IntensiveSynthesis))
+        if (step.Condition == CraftCondition.GoodOmen && MidAllowVenerationGoodOmen && MidAllowIntensiveVeneration && progressDeficit > sim.CalculateProgress(step, CraftAction.IntensiveSynthesis))
             return CraftAction.Veneration; // next step would be intensive, vene is a good choice here
 
         if (step.IQStacks < 10 && !venerationActive)
@@ -276,7 +312,6 @@ public class Solver
             return CraftAction.Observe;
 
         // ok, durability management time
-        //var duraAction = SolveMidDurability(sim, step, availableCP, reservedCPForQuality);
         var duraAction = SolveMidDurabilityStartQuality(sim, step, availableCP);
         if (duraAction != CraftAction.None)
             return duraAction;
@@ -319,7 +354,8 @@ public class Solver
         // - spending (normal) gs on 100p touch is worse than using finesse under inno, so don't bother if we don't have enough dura
         // - gs is a good way to spend pliant if we don't need dura and don't have inno up, even if we're going to use 100p touches
         // as a conclusion, we use gs if we have enough dura or we have pliant
-        if (MidGSBeforeInno && (step.Condition == CraftCondition.Pliant || effectiveDura > 20) && freeCP >= sim.GetCPCost(step, CraftAction.GreatStrides) + 18 + 7 + 18)
+        // TODO: is it a good idea to use gs on primed? it's only marginally useful (if we get pliant on next step), primed inno is a free ~9cp
+        if (MidGSBeforeInno && step.Condition != CraftCondition.Primed && (step.Condition == CraftCondition.Pliant || effectiveDura > 20) && freeCP >= sim.GetCPCost(step, CraftAction.GreatStrides) + 18 + 7 + 18)
             return CraftAction.GreatStrides;
         // just inno and react to what happens...
         return CraftAction.Innovation;
@@ -510,6 +546,10 @@ public class Solver
             return CraftAction.None;
         }
 
+        // primed manipulation is a reasonable action too
+        if (MuMePrimedManipPreQuality && step.Condition == CraftCondition.Primed && step.ManipulationLeft == 0 && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation))
+            return CraftAction.Manipulation;
+
         var criticalDurabilityThreshold = step.Condition != CraftCondition.Sturdy ? 10 : 5;
         var lowDurabilityThreshold = allowObserveOnLowDura && step.Condition is CraftCondition.Normal or CraftCondition.GoodOmen or CraftCondition.Good ? 25 : criticalDurabilityThreshold;
         if (step.Durability <= lowDurabilityThreshold)
@@ -542,6 +582,11 @@ public class Solver
             return SolveMidDurabilityQualityPliant(sim, step, availableCP);
         }
 
+        if (MuMePrimedManipAfterIQ && step.Condition == CraftCondition.Primed && step.ManipulationLeft == 0 && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation) + EstimateCPToUtilizeDurabilityForQuality(effectiveDura, 5))
+        {
+            return CraftAction.Manipulation;
+        }
+
         if (effectiveDura <= 10)
         {
             // we're very low on durability - not enough to even byregot
@@ -568,29 +613,27 @@ public class Solver
     private CraftAction SolveMidDurabilityQualityPliant(Simulator sim, StepState step, int availableCP)
     {
         var effectiveDura = step.Durability + step.ManipulationLeft * 5; // since we are going to use a lot of non-dura actions (buffs/observes), this is what really matters
-
-        // estimate how much cp do we need to utilize current durability
-        var estHalfComboCost = 34; // rough baseline - every 10 extra dura is one half-combo, which requires 34cp (1/2 inno + observe+focused) - TODO: should it also include 1/2 GS?
-        var estNumHalfCombosWithCurrentDura = effectiveDura <= 20 ? 0 : (effectiveDura + 9) / 10; // 11-20 dura is 0 half-combos, 21-30 is 1, ...
-        var estCPNeededToUtilizeCurrentDura = estHalfComboCost * estNumHalfCombosWithCurrentDura;
-
-        var cpMinAfterManip = effectiveDura <= 10 ? 0 : estCPNeededToUtilizeCurrentDura + 4 * estHalfComboCost;
-        var cpMinAfterMend = effectiveDura <= 10 ? 0 : estCPNeededToUtilizeCurrentDura + 3 * estHalfComboCost;
-
-        if (step.ManipulationLeft <= MidMaxPliantManipClip && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation) + cpMinAfterManip)
+        if (step.ManipulationLeft <= MidMaxPliantManipClip && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation) + EstimateCPToUtilizeDurabilityForQuality(effectiveDura, 4))
             return CraftAction.Manipulation;
-        if (effectiveDura + 30 <= sim.Craft.CraftDurability && availableCP >= sim.GetCPCost(step, CraftAction.MastersMend) + cpMinAfterMend)
+        if (effectiveDura + 30 <= sim.Craft.CraftDurability && availableCP >= sim.GetCPCost(step, CraftAction.MastersMend) + EstimateCPToUtilizeDurabilityForQuality(effectiveDura, 3))
             return CraftAction.MastersMend;
         return CraftAction.None;
     }
 
+    private int EstimateCPToUtilizeDurabilityForQuality(int effectiveDura, int extraHalfCombos)
+    {
+        var estHalfComboCost = 34; // rough baseline - every 10 extra dura is one half-combo, which requires 34cp (1/2 inno + observe+focused) - TODO: should it also include 1/2 GS?
+        var estNumHalfCombosWithCurrentDura = effectiveDura <= 20 ? 0 : (effectiveDura + 9) / 10; // 11-20 dura is 0 half-combos, 21-30 is 1, ...
+        var estCPNeededToUtilizeCurrentDura = estHalfComboCost * estNumHalfCombosWithCurrentDura;
+        return effectiveDura <= 10 ? 0 : estCPNeededToUtilizeCurrentDura + extraHalfCombos * estHalfComboCost;
+    }
 
     private CraftAction SolveMidHighPriorityProgress(Simulator sim, StepState step, bool allowIntensive)
     {
         // high-priority progress actions (exploit conditions)
         if (step.Condition == CraftCondition.Good && allowIntensive && step.Durability > sim.GetDurabilityCost(step, CraftAction.IntensiveSynthesis))
             return CraftAction.IntensiveSynthesis;
-        if (step.Condition is CraftCondition.Centered or CraftCondition.Sturdy && step.Durability > sim.GetDurabilityCost(step, CraftAction.RapidSynthesis))
+        if (step.Condition is CraftCondition.Centered or CraftCondition.Sturdy or CraftCondition.Malleable && step.Durability > sim.GetDurabilityCost(step, CraftAction.RapidSynthesis))
             return CraftAction.RapidSynthesis;
         return CraftAction.None;
     }
@@ -672,6 +715,7 @@ public class Solver
         // - otherwise as long as we have cp, we use most efficient actions; we observe if we're low on dura, trying to bait better conditions
         // - if we're out of cp, we spam rapid, and then finish with careful/basic
         // TODO: veneration outside pliant/good-omen
+        // TODO: primed? probably quite pointless at this point...
         if (step.Condition is CraftCondition.Good or CraftCondition.Excellent)
         {
             if (CanUseSynthForFinisher(sim, step, CraftAction.IntensiveSynthesis))
@@ -701,10 +745,14 @@ public class Solver
         //if (step.Condition is CraftCondition.Centered && step.Durability > sim.GetDurabilityCost(step, CraftAction.RapidSynthesis))
         //    return CraftAction.RapidSynthesis; // use centered condition
 
+        // best possible use of malleable is hs+intensive - but only bother if careful won't suffice
+        if (step.Condition == CraftCondition.Malleable && CanUseSynthForFinisher(sim, step, CraftAction.IntensiveSynthesis) && (step.HeartAndSoulAvailable || step.HeartAndSoulActive) && step.Progress + sim.CalculateProgress(step, step.RemainingCP >= 7 ? CraftAction.CarefulSynthesis : CraftAction.BasicSynthesis) < sim.Craft.CraftProgress)
+            return step.HeartAndSoulActive ? CraftAction.IntensiveSynthesis : CraftAction.HeartAndSoul;
+
         if (step.PrevComboAction == CraftAction.Observe && CanUseSynthForFinisher(sim, step, CraftAction.FocusedSynthesis))
             return CraftAction.FocusedSynthesis;
 
-        if (step.Condition is CraftCondition.Normal or CraftCondition.Pliant or CraftCondition.Centered && step.ManipulationLeft > 0 && step.Durability <= 10 && step.RemainingCP >= sim.GetCPCost(step, CraftAction.Observe) + 5)
+        if (step.Condition is CraftCondition.Normal or CraftCondition.Pliant or CraftCondition.Centered or CraftCondition.Primed && step.ManipulationLeft > 0 && step.Durability <= 10 && step.RemainingCP >= sim.GetCPCost(step, CraftAction.Observe) + 5)
             return CraftAction.Observe; // regen a bit of dura and use focused
 
         if (CanUseSynthForFinisher(sim, step, CraftAction.CarefulSynthesis))
@@ -720,6 +768,10 @@ public class Solver
         // and we're out of dura - finish craft with basic if it's ok, otherwise try rapid
         if (step.Progress + sim.CalculateProgress(step, CraftAction.BasicSynthesis) >= sim.Craft.CraftProgress)
             return CraftAction.BasicSynthesis;
+
+        // try to finish with hs+intensive
+        if (step.RemainingCP >= sim.GetCPCost(step, CraftAction.IntensiveSynthesis) && (sim.CanUseAction(step, CraftAction.IntensiveSynthesis) || step.HeartAndSoulAvailable))
+            return sim.CanUseAction(step, CraftAction.IntensiveSynthesis) ? CraftAction.IntensiveSynthesis : CraftAction.HeartAndSoul;
 
         // just pray
         return CraftAction.RapidSynthesis;
