@@ -25,6 +25,7 @@ public class CraftState
     public static double[] NormalCraftConditionProbabilities(int statLevel) => [1, statLevel >= 63 ? 0.25 : 0.2, 0.04];
     public static double[] EWRelicT1CraftConditionProbabilities() => [1, 0.03, 0, 0, 0.12, 0.12, 0.12, 0, 0, 0.12];
     public static double[] EWRelicT2CraftConditionProbabilities() => [1, 0.04, 0, 0, 0, 0.15, 0.12, 0.12, 0.15, 0.12];
+    public static double[] EW5StarCraftConditionProbabilities() => [1, 0.04, 0, 0, 0.12, 0.12, 0.10, 0.10, 0.12, 0.12];
 }
 
 public class StepState
