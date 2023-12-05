@@ -53,8 +53,6 @@ public class Solver
     public bool MuMeAllowObserve = false; // if true, observe rather than use actions during unfavourable conditions to conserve durability
     public int MuMeMinStepsForManip = 2; // if this or less rounds are remaining on mume, don't use manipulation under favourable conditions
     public int MuMeMinStepsForVene = 1; // if this or less rounds are remaining on mume, don't use veneration
-    public int MidMaxPliantManipClip = 1; // max number of manipulation stacks we can tolerate losing by reapplying manip on pliant
-    public int MidMasterMendLeeway = 0; // min durability deficit to keep after master's mend (e.g. if we'd want to use buff under manip on next steps)
     public int MidMinIQForHSPrecise = 10; // min iq stacks where we use h&s+precise; 10 to disable
     public bool MidBaitPliantWithObservePreQuality = true; // if true, when very low on durability and without manip active during pre-quality phase, we use observe rather than normal manip
     public bool MidBaitPliantWithObserveAfterIQ = true; // if true, when very low on durability and without manip active after iq is stacked, we use observe rather than normal manip or inno+finnesse
@@ -88,8 +86,6 @@ public class Solver
         ImGui.Checkbox("MuMe: observe during unfavourable conditions instead of spending dura on normal rapids", ref MuMeAllowObserve);
         ImGui.SliderInt("MuMe: allow manipulation only if more than this amount of steps remain on mume", ref MuMeMinStepsForManip, 0, 5);
         ImGui.SliderInt("MuMe: allow veneration only if more than this amount of steps remain on mume", ref MuMeMinStepsForVene, 0, 5);
-        ImGui.SliderInt("Mid: max steps we allow clipping by reapplying manip on pliant", ref MidMaxPliantManipClip, 0, 8);
-        ImGui.SliderInt("Mid: allow master mend only if at least this durability deficit remains", ref MidMasterMendLeeway, 0, 30);
         ImGui.SliderInt("Mid: min iq stacks to spend h&s on precise (10 to disable)", ref MidMinIQForHSPrecise, 0, 10);
         ImGui.Checkbox("Mid: on low dura, prefer observe to non-pliant manip before iq is stacked", ref MidBaitPliantWithObservePreQuality);
         ImGui.Checkbox("Mid: on low dura, prefer observe to non-pliant manip / inno+finesse after iq is stacked", ref MidBaitPliantWithObserveAfterIQ);
@@ -526,7 +522,15 @@ public class Solver
         // ok, we're out of options - use gs + byregot
         if (step.GreatStridesLeft == 0 && availableCP >= sim.GetCPCost(step, CraftAction.GreatStrides) + 24)
             return CraftAction.GreatStrides;
-        return BestByregot(sim, step);
+        if (step.Condition is not CraftCondition.Good and not CraftCondition.Excellent && step.Durability > 10)
+        {
+            // try baiting good
+            if (step.GreatStridesLeft != 1 && step.InnovationLeft != 1 && availableCP >= sim.GetCPCost(step, CraftAction.Observe) + 24)
+                return CraftAction.Observe;
+            if (FinisherBaitGoodByregot && step.CarefulObservationLeft > 0)
+                return CraftAction.CarefulObservation;
+        }
+        return CraftAction.ByregotBlessing;
     }
 
     // TODO: consider waste-not...
@@ -539,9 +543,9 @@ public class Solver
         if (step.Condition == CraftCondition.Pliant)
         {
             // see if we can utilize pliant for manip/mm
-            if (step.ManipulationLeft <= MidMaxPliantManipClip && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation))
+            if (step.ManipulationLeft <= 1 && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation))
                 return CraftAction.Manipulation;
-            if (step.Durability + 30 + (step.ManipulationLeft > 0 ? 5 : 0) + MidMasterMendLeeway <= sim.Craft.CraftDurability && availableCP >= sim.GetCPCost(step, CraftAction.MastersMend))
+            if (step.Durability + 30 + (step.ManipulationLeft > 0 ? 5 : 0) <= sim.Craft.CraftDurability && availableCP >= sim.GetCPCost(step, CraftAction.MastersMend))
                 return CraftAction.MastersMend;
             return CraftAction.None;
         }
@@ -600,7 +604,7 @@ public class Solver
             if (freeCP >= 18 + 4 * 32) // inno + 4xfinesse
                 return CraftAction.None;
             // just do a normal manip/mm
-            if (step.ManipulationLeft <= MidMaxPliantManipClip && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation) + 24)
+            if (step.ManipulationLeft <= 1 && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation) + 24)
                 return CraftAction.Manipulation;
             if (availableCP >= sim.GetCPCost(step, CraftAction.MastersMend) + 24)
                 return CraftAction.MastersMend;
@@ -613,7 +617,7 @@ public class Solver
     private CraftAction SolveMidDurabilityQualityPliant(Simulator sim, StepState step, int availableCP)
     {
         var effectiveDura = step.Durability + step.ManipulationLeft * 5; // since we are going to use a lot of non-dura actions (buffs/observes), this is what really matters
-        if (step.ManipulationLeft <= MidMaxPliantManipClip && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation) + EstimateCPToUtilizeDurabilityForQuality(effectiveDura, 4))
+        if (step.ManipulationLeft <= 1 && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation) + EstimateCPToUtilizeDurabilityForQuality(effectiveDura, 4))
             return CraftAction.Manipulation;
         if (effectiveDura + 30 <= sim.Craft.CraftDurability && availableCP >= sim.GetCPCost(step, CraftAction.MastersMend) + EstimateCPToUtilizeDurabilityForQuality(effectiveDura, 3))
             return CraftAction.MastersMend;
@@ -779,13 +783,6 @@ public class Solver
 
     private bool CanUseSynthForFinisher(Simulator sim, StepState step, CraftAction action)
         => step.RemainingCP >= sim.GetCPCost(step, action) && (step.Durability > sim.GetDurabilityCost(step, action) || step.Progress + sim.CalculateProgress(step, action) >= sim.Craft.CraftProgress);
-
-    private CraftAction BestByregot(Simulator sim, StepState step)
-    {
-        // if we still have careful observations, we might wanna try baiting good
-        // TODO: sturdy byregot if we're at critical dura/cp (e.g. 10 dura and no manip/no cp for observes)
-        return !FinisherBaitGoodByregot || step.CarefulObservationLeft == 0 || (step.Condition is CraftCondition.Good or CraftCondition.Excellent) ? CraftAction.ByregotBlessing : CraftAction.CarefulObservation;
-    }
 
     private bool CanUseActionSafelyInFinisher(Simulator sim, StepState step, CraftAction action, int availableCP)
     {

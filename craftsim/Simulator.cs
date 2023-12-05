@@ -117,7 +117,7 @@ public class Simulator
             int repair = 0;
             if (action == CraftAction.MastersMend)
                 repair += 30;
-            if (step.ManipulationLeft > 0 && !SkipUpdates(action))
+            if (step.ManipulationLeft > 0 && action != CraftAction.Manipulation && !SkipUpdates(action))
                 repair += 5;
             next.Durability = Math.Min(Craft.CraftDurability, next.Durability + repair);
         }
