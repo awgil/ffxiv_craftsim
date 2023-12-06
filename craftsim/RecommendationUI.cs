@@ -8,6 +8,7 @@ public class RecommendationUI
     private GameCraftState _game;
     private Solver _solver = new();
     public CraftAction Recommendation { get; private set; }
+    public string RecommendationComment { get; private set; } = "";
 
     public RecommendationUI(GameCraftState game)
     {
@@ -23,7 +24,7 @@ public class RecommendationUI
         }
 
         var sim = new Simulator(_game.CurState, 0);
-        Recommendation = _solver.SolveNextStep(sim, _game.CurStep);
+        (Recommendation, RecommendationComment) = _solver.SolveNextStep(sim, _game.CurStep);
 
         ImGui.TextUnformatted($"Stats: {_game.CurState.StatCraftsmanship}/{_game.CurState.StatControl}/{_game.CurState.StatCP} (L{_game.CurState.StatLevel}){(_game.CurState.Specialist ? " (spec)" : "")}{(_game.CurState.Splendorous ? " (splend)" : "")}");
         ImGui.TextUnformatted($"Craft: L{_game.CurState.CraftLevel}{(_game.CurState.CraftExpert ? "X" : "")} {_game.CurState.CraftDurability}dur, {_game.CurState.CraftProgress}p, {_game.CurState.CraftQualityMax}q ({_game.CurState.CraftQualityMin1}/{_game.CurState.CraftQualityMin2}/{_game.CurState.CraftQualityMin3})");
@@ -51,7 +52,7 @@ public class RecommendationUI
         if (ImGui.CollapsingHeader("Solver setup"))
             _solver.Draw();
 
-        if (ImGui.Button($"Recommendation: {Recommendation}"))
+        if (ImGui.Button($"Recommendation: {Recommendation} ({RecommendationComment})"))
             _game.UseAction(Recommendation);
     }
 

@@ -13,7 +13,7 @@ public class SimulatorUI
     private int _seed = 0;
     private CraftState _craft;
     private Simulator? _sim;
-    private List<(StepState state, CraftAction action, bool success)> _steps = new();
+    private List<(StepState state, CraftAction action, bool success, string comment)> _steps = new();
     private ForcedResult _forcedResult;
     private Solver _solver = new();
 
@@ -58,7 +58,8 @@ public class SimulatorUI
         if (ImGui.Button("Solve all"))
             SolveRest();
         ImGui.SameLine();
-        ImGui.TextUnformatted($"Suggestion: {_solver.SolveNextStep(_sim, _steps.Last().state)}");
+        var (rec, recComment) = _solver.SolveNextStep(_sim, _steps.Last().state);
+        ImGui.TextUnformatted($"Suggestion: {rec} ({recComment})");
 
         if (ImGui.CollapsingHeader("Solver strategy"))
             _solver.Draw();
@@ -81,8 +82,8 @@ public class SimulatorUI
                     var (res, next) = _sim.Execute(curStep, opt, _forcedResult);
                     if (res != ExecuteResult.CantUse)
                     {
-                        _steps[_steps.Count - 1] = (curStep, opt, res == ExecuteResult.Succeeded);
-                        _steps.Add((next, CraftAction.None, false));
+                        _steps[_steps.Count - 1] = (curStep, opt, res == ExecuteResult.Succeeded, "manual");
+                        _steps.Add((next, CraftAction.None, false, ""));
                         _forcedResult = ForcedResult.Random;
                     }
                 }
@@ -144,7 +145,7 @@ public class SimulatorUI
             if (step.state.HeartAndSoulActive)
                 sb.Append(" HnS");
             if (step.action != CraftAction.None)
-                sb.Append($"; used {step.action}{(step.success ? "" : " (fail)")}");
+                sb.Append($"; used {step.action}{(step.success ? "" : " (fail)")} ({step.comment})");
             ImGui.TextUnformatted(sb.ToString());
 
             ++i;
@@ -163,7 +164,7 @@ public class SimulatorUI
         _seed = seed;
         _sim = new(_craft, seed);
         _steps.Clear();
-        _steps.Add((_sim.CreateInitial(), CraftAction.None, false));
+        _steps.Add((_sim.CreateInitial(), CraftAction.None, false, ""));
     }
 
     private bool SolveNext()
@@ -171,12 +172,12 @@ public class SimulatorUI
         if (_sim == null)
             return false;
         var state = _steps.Last().state;
-        var action = _solver.SolveNextStep(_sim, state);
+        var (action, comment) = _solver.SolveNextStep(_sim, state);
         var (res, next) = _sim.Execute(state, action);
         if (res == ExecuteResult.CantUse)
             return false;
-        _steps[_steps.Count - 1] = (state, action, res == ExecuteResult.Succeeded);
-        _steps.Add((next, CraftAction.None, false));
+        _steps[_steps.Count - 1] = (state, action, res == ExecuteResult.Succeeded, comment);
+        _steps.Add((next, CraftAction.None, false, ""));
         return true;
     }
 
