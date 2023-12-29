@@ -56,8 +56,8 @@ public class Solver
     public int MidMinIQForHSPrecise = 10; // min iq stacks where we use h&s+precise; 10 to disable
     public bool MidBaitPliantWithObservePreQuality = true; // if true, when very low on durability and without manip active during pre-quality phase, we use observe rather than normal manip
     public bool MidBaitPliantWithObserveAfterIQ = true; // if true, when very low on durability and without manip active after iq is stacked, we use observe rather than normal manip or inno+finnesse
-    public bool MuMePrimedManipPreQuality = true; // if true, allow using primed manipulation during pre-quality phase
-    public bool MuMePrimedManipAfterIQ = true; // if true, allow using primed manipulation during after iq is stacked
+    public bool MidPrimedManipPreQuality = true; // if true, allow using primed manipulation during pre-quality phase
+    public bool MidPrimedManipAfterIQ = true; // if true, allow using primed manipulation during after iq is stacked
     public bool MidKeepHighDuraUnbuffed = true; // if true, observe rather than use actions during unfavourable conditions to conserve durability when no buffs are active
     public bool MidKeepHighDuraVeneration = false; // if true, observe rather than use actions during unfavourable conditions to conserve durability when veneration is active
     public bool MidAllowVenerationGoodOmen = true; // if true, we allow using veneration during iq phase if we lack a lot of progress on good omen
@@ -89,8 +89,8 @@ public class Solver
         ImGui.SliderInt("Mid: min iq stacks to spend h&s on precise (10 to disable)", ref MidMinIQForHSPrecise, 0, 10);
         ImGui.Checkbox("Mid: on low dura, prefer observe to non-pliant manip before iq is stacked", ref MidBaitPliantWithObservePreQuality);
         ImGui.Checkbox("Mid: on low dura, prefer observe to non-pliant manip / inno+finesse after iq is stacked", ref MidBaitPliantWithObserveAfterIQ);
-        ImGui.Checkbox("Mid: use manipulation on primed before iq is stacked", ref MuMePrimedManipPreQuality);
-        ImGui.Checkbox("Mid: use manipulation on primed after iq is stacked, if enough cp is available to utilize durability well", ref MuMePrimedManipAfterIQ);
+        ImGui.Checkbox("Mid: use manipulation on primed before iq is stacked", ref MidPrimedManipPreQuality);
+        ImGui.Checkbox("Mid: use manipulation on primed after iq is stacked, if enough cp is available to utilize durability well", ref MidPrimedManipAfterIQ);
         ImGui.Checkbox("Mid: allow observes during unfavourable conditions without buffs", ref MidKeepHighDuraUnbuffed);
         ImGui.Checkbox("Mid: allow observes during unfavourable conditions under veneration", ref MidKeepHighDuraVeneration);
         ImGui.Checkbox("Mid: allow veneration if we still have large progress deficit (> intensive) on good omen", ref MidAllowVenerationGoodOmen);
@@ -556,7 +556,7 @@ public class Solver
         }
 
         // primed manipulation is a reasonable action too
-        if (MuMePrimedManipPreQuality && step.Condition == CraftCondition.Primed && step.ManipulationLeft == 0 && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation))
+        if (MidPrimedManipPreQuality && step.Condition == CraftCondition.Primed && step.ManipulationLeft == 0 && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation))
             return CraftAction.Manipulation;
 
         var criticalDurabilityThreshold = step.Condition != CraftCondition.Sturdy ? 10 : 5;
@@ -597,7 +597,7 @@ public class Solver
             return SolveMidDurabilityQualityPliant(sim, step, availableCP);
         }
 
-        if (MuMePrimedManipAfterIQ && step.Condition == CraftCondition.Primed && step.ManipulationLeft == 0 && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation) + EstimateCPToUtilizeDurabilityForQuality(effectiveDura, 5))
+        if (MidPrimedManipAfterIQ && step.Condition == CraftCondition.Primed && step.ManipulationLeft == 0 && availableCP >= sim.GetCPCost(step, CraftAction.Manipulation) + EstimateCPToUtilizeDurabilityForQuality(effectiveDura, 5))
         {
             return CraftAction.Manipulation;
         }
